@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local RAG System</title>
+    <!-- Using Tailwind CSS for styling for a modern look -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Simple spinner animation */
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border-left-color: #09f;
+            animation: spin 1s ease infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+        
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Local Document Q&A</h1>
+            <p class="text-gray-600 mt-2">Index your local documents and ask questions.</p>
+        </header>
+
+        <!-- Status Message Area -->
+        <div id="status-message" class="mb-6 p-4 rounded-lg text-center" role="alert" aria-live="assertive"></div>
+        
+        <!-- Step 1: Indexing -->
+        <section class="bg-white p-6 rounded-xl shadow-md mb-8">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-xl font-semibold">Step 1: Index Your Documents</h2>
+                    <p class="text-gray-500 mt-1">Click to process all files in the 'documents' folder.</p>
+                </div>
+                <button id="index-button" class="bg-blue-600 text-white font-semibold py-2 px-5 rounded-lg hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 flex items-center">
+                    <span id="index-button-text">Index Files</span>
+                    <div id="index-spinner" class="spinner ml-3 hidden"></div>
+                </button>
+            </div>
+        </section>
+
+        <!-- Step 2: Search -->
+        <section class="bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-semibold">Step 2: Ask a Question</h2>
+            <form id="search-form" class="mt-4">
+                <div class="relative">
+                    <textarea id="query-input" rows="3" class="w-full p-3 pr-24 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition" placeholder="e.g., What is the main idea of the sample document?"></textarea>
+                    <button type="submit" id="search-button" class="absolute right-3 top-1/2 -translate-y-1/2 bg-green-600 text-white font-semibold py-2 px-5 rounded-lg hover:bg-green-700 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 flex items-center disabled:bg-gray-400">
+                        <span id="search-button-text">Search</span>
+                        <div id="search-spinner" class="spinner ml-3 hidden"></div>
+                    </button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Results Area -->
+        <main id="results-container" class="mt-8">
+            <!-- Search results will be dynamically inserted here -->
+        </main>
+        
+    </div>
+
+    <script>
+        // Get references to all the interactive elements
+        const indexButton = document.getElementById('index-button');
+        const searchButton = document.getElementById('search-button');
+        const queryInput = document.getElementById('query-input');
+        const searchForm = document.getElementById('search-form');
+        const resultsContainer = document.getElementById('results-container');
+        const statusMessage = document.getElementById('status-message');
+
+        const indexSpinner = document.getElementById('index-spinner');
+        const searchSpinner = document.getElementById('search-spinner');
+        const indexButtonText = document.getElementById('index-button-text');
+        const searchButtonText = document.getElementById('search-button-text');
+
+        // Function to display status messages
+        function showStatus(message, type = 'info') {
+            statusMessage.textContent = message;
+            statusMessage.className = 'mb-6 p-4 rounded-lg text-center '; // Reset classes
+            if (type === 'success') {
+                statusMessage.classList.add('bg-green-100', 'text-green-800');
+            } else if (type === 'error') {
+                statusMessage.classList.add('bg-red-100', 'text-red-800');
+            } else if (type === 'warning') {
+                statusMessage.classList.add('bg-yellow-100', 'text-yellow-800');
+            } else { // info
+                statusMessage.classList.add('bg-blue-100', 'text-blue-800');
+            }
+        }
+
+        // --- Event Listener for Indexing ---
+        indexButton.addEventListener('click', async () => {
+            // Show loading state
+            indexButton.disabled = true;
+            indexSpinner.classList.remove('hidden');
+            indexButtonText.textContent = 'Indexing...';
+            showStatus('Starting the indexing process. This may take a moment...', 'info');
+            resultsContainer.innerHTML = ''; // Clear previous results
+
+            try {
+                const response = await fetch('/index', {
+                    method: 'POST',
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showStatus(data.message, data.status);
+                } else {
+                    showStatus(`Error: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                console.error('Indexing fetch error:', error);
+                showStatus('An unexpected error occurred. Check the console.', 'error');
+            } finally {
+                // Restore button state
+                indexButton.disabled = false;
+                indexSpinner.classList.add('hidden');
+                indexButtonText.textContent = 'Index Files';
+            }
+        });
+
+        // --- Event Listener for Searching ---
+        searchForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const query = queryInput.value.trim();
+            if (!query) {
+                showStatus('Please enter a question.', 'warning');
+                return;
+            }
+
+            // Show loading state
+            searchButton.disabled = true;
+            searchSpinner.classList.remove('hidden');
+            searchButtonText.textContent = 'Searching...';
+            showStatus('Searching for relevant information...', 'info');
+            resultsContainer.innerHTML = '';
+
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: query }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayResults(data.results);
+                } else {
+                    showStatus(`Error: ${data.message}`, 'error');
+                }
+
+            } catch (error) {
+                console.error('Search fetch error:', error);
+                showStatus('An unexpected error occurred. Check the console.', 'error');
+            } finally {
+                // Restore button state
+                searchButton.disabled = false;
+                searchSpinner.classList.add('hidden');
+                searchButtonText.textContent = 'Search';
+            }
+        });
+
+        // Function to render the search results on the page
+        function displayResults(results) {
+            if (!results || results.length === 0) {
+                showStatus('No relevant information found in your documents.', 'info');
+                return;
+            }
+
+            statusMessage.innerHTML = ''; // Clear status message area
+
+            const resultsHtml = `
+                <h2 class="text-2xl font-semibold mb-4">Search Results</h2>
+                <div class="space-y-4">
+                    ${results.map(result => `
+                        <div class="bg-white p-5 rounded-lg shadow">
+                            <p class="text-gray-700">${result.text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
+                            <div class="mt-3 text-sm text-gray-500 flex justify-between items-center">
+                                <span>Source: <strong>${result.source}</strong></span>
+                                <span class="font-mono text-xs bg-gray-100 text-gray-700 py-1 px-2 rounded">
+                                    Score: ${result.score.toFixed(4)}
+                                </span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            resultsContainer.innerHTML = resultsHtml;
+        }
+    </script>
+</body>
+</html>
