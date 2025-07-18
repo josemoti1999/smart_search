@@ -30,6 +30,10 @@ system_requirement_check.ipynb
 *.db
 document_store.db
 embeddings/
+model_offload/
+model_streaming/
+models_cache/
+faiss_index/
 
 # VS Code
 .vscode/

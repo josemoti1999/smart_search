@@ -74,6 +74,11 @@ def check_memory_pressure():
     stats = get_system_stats()
     return stats['ram_percent'] > 85.0  # Return True if RAM usage > 85%
 
+def check_memory_pressure():
+    """Check if system is under memory pressure."""
+    stats = get_system_stats()
+    return stats['ram_percent'] > 85.0  # Return True if RAM usage > 85%
+
 def load_or_download_gemma():
     """Load Gemma model from local cache or download if not available."""
     try:
@@ -540,8 +545,9 @@ def generate_gemma_response(context, query):
         
         # Check system memory pressure
         memory_pressure = check_memory_pressure()
+        
         if memory_pressure:
-            print("⚠️ System under memory pressure - using conservative settings")
+            print(f"⚠️ System under memory pressure - using conservative settings")
         
         # Check actual available GPU memory
         if torch.cuda.is_available():
@@ -557,8 +563,8 @@ def generate_gemma_response(context, query):
             # Adjust memory strategy based on available RAM and GPU
             available_ram = step3_stats['ram_available_gb']
             
-            if memory_pressure or available_ram < 4.0:
-                print(f"🔴 Low system RAM ({available_ram:.1f}GB) - forcing CPU mode")
+            if memory_pressure or available_ram < 3.0:
+                print(f"🔴 Low system RAM (Available: {available_ram:.1f}GB) - using CPU mode")
                 device = "cpu"
                 torch_dtype = torch.float32
                 use_streaming = False
@@ -589,24 +595,37 @@ def generate_gemma_response(context, query):
         print(f"Memory configuration time: {time.time() - step4_start:.2f} seconds")
         step4_stats = print_system_stats("After Memory Config")
             
-        # Step 5: Load model with enhanced memory monitoring
+        # Step 5: Load model with automatic resource detection
         print("\nStep 5: Loading Model")
         step5_start = time.time()
         
         print("Starting model load...")
         
         if device == "cpu":
-            print("Loading Gemma model on CPU (no quantization needed)")
-            print("💡 Using CPU mode to preserve system stability")
+            print("Loading Gemma model on CPU")
             
-            model = Gemma3nForConditionalGeneration.from_pretrained(
-                GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-3n-e2b-it",
-                torch_dtype=torch_dtype,
-                device_map="cpu",
-                low_cpu_mem_usage=True,
-                local_files_only=os.path.exists(GEMMA_CACHE_PATH)
-            ).eval()
-            print("✅ Model loaded successfully on CPU")
+            # Monitor memory during CPU loading
+            pre_load_stats = get_system_stats()
+            
+            try:
+                model = Gemma3nForConditionalGeneration.from_pretrained(
+                    GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-3n-e2b-it",
+                    torch_dtype=torch_dtype,
+                    device_map="cpu",
+                    low_cpu_mem_usage=True,
+                    local_files_only=os.path.exists(GEMMA_CACHE_PATH)
+                ).eval()
+                
+                # Check memory after loading
+                post_load_stats = get_system_stats()
+                memory_used = post_load_stats['ram_used_gb'] - pre_load_stats['ram_used_gb']
+                
+                print(f"✅ Model loaded successfully on CPU")
+                print(f"📊 Memory used for model: {memory_used:.2f}GB")
+                    
+            except Exception as e:
+                print(f"❌ CPU model loading failed: {e}")
+                return f"Error loading model on CPU: {str(e)}"
             
         elif use_streaming:
             print("🧠 Loading Gemma model with layer-by-layer streaming for limited GPU")
@@ -715,7 +734,7 @@ def generate_gemma_response(context, query):
         print(f"Input movement time: {time.time() - step6_start:.2f} seconds")
         step6_stats = print_system_stats("After Input Move")
 
-        # Step 7: Generate response with monitoring
+        # Step 7: Generate response
         print("\nStep 7: Generating Response")
         step7_start = time.time()
         
@@ -723,7 +742,7 @@ def generate_gemma_response(context, query):
         if use_streaming and device != "cpu":
             print("🧠 Using layer streaming mode - layers will be loaded on-demand")
         elif device == "cpu":
-            print("🖥️ Using CPU mode - monitoring system performance")
+            print("🖥️ Using CPU mode")
             
         # Monitor system before generation
         pre_gen_stats = print_system_stats("Pre-Generation")
@@ -732,33 +751,38 @@ def generate_gemma_response(context, query):
             if torch.cuda.is_available():
                 pre_gen_memory = torch.cuda.memory_allocated(0) / (1024**3)
                 print(f"GPU Memory before generation: {pre_gen_memory:.2f}GB")
+
+            # declare max tokens
+            max_tokens=200
             
-            # Adjust generation parameters based on available resources
-            max_tokens = 100 if pre_gen_stats['ram_percent'] > 80 else 150
-            print(f"Using max_new_tokens={max_tokens} based on system load")
-            
-            # Use simpler generation parameters that work with Gemma
-            generation = model.generate(
-                **inputs,
-                max_new_tokens=max_tokens,
-                do_sample=True,
-                temperature=0.7,
-                pad_token_id=processor.tokenizer.pad_token_id,
-                eos_token_id=processor.tokenizer.eos_token_id,
-                use_cache=True
-            )
-            
-            # Ensure generation tensor is materialized and moved to CPU
-            if hasattr(generation, 'is_meta') and generation.is_meta:
-                print("Warning: Generation tensor is meta, attempting to materialize...")
-                generation = generation.detach()
-            
-            # Move to CPU safely and clean up GPU memory immediately
-            if generation.device != torch.device('cpu'):
-                generation = generation.cpu()
-            
-            # Extract only the new tokens (skip the input)
-            generation = generation[0][input_len:]
+            try:
+                # Use simpler generation parameters that work with Gemma
+                generation = model.generate(
+                    **inputs,
+                    max_new_tokens=max_tokens,
+                    do_sample=True,
+                    temperature=0.7,
+                    pad_token_id=processor.tokenizer.pad_token_id,
+                    eos_token_id=processor.tokenizer.eos_token_id,
+                    use_cache=True
+                )
+                
+                # Ensure generation tensor is materialized and moved to CPU
+                if hasattr(generation, 'is_meta') and generation.is_meta:
+                    print("Warning: Generation tensor is meta, attempting to materialize...")
+                    generation = generation.detach()
+                
+                # Move to CPU safely and clean up GPU memory immediately
+                if generation.device != torch.device('cpu'):
+                    generation = generation.cpu()
+                
+                # Extract only the new tokens (skip the input)
+                generation = generation[0][input_len:]
+                
+            except Exception as gen_error:
+                print(f"❌ Generation failed: {gen_error}")
+                cleanup_variables(model, processor, inputs)
+                return f"Error during text generation: {str(gen_error)}"
             
             # Immediate cleanup of GPU tensors
             if torch.cuda.is_available():
@@ -775,11 +799,17 @@ def generate_gemma_response(context, query):
         print("\nStep 8: Decoding and Comprehensive Cleanup")
         step8_start = time.time()
         
-        print("Decoding response...")
-        response = processor.decode(generation, skip_special_tokens=True)
-        
-        # Clean up generation tensor immediately
-        cleanup_variables(generation)
+        try:
+            print("Decoding response...")
+            response = processor.decode(generation, skip_special_tokens=True)
+                
+            # Clean up generation tensor immediately
+            cleanup_variables(generation)
+            
+        except Exception as decode_error:
+            print(f"❌ Decoding failed: {decode_error}")
+            cleanup_variables(generation, model, processor, inputs)
+            return f"Error during response decoding: {str(decode_error)}"
         
         print("Performing comprehensive memory cleanup...")
         pre_cleanup_stats = print_system_stats("Pre-Cleanup")
@@ -818,15 +848,37 @@ def generate_gemma_response(context, query):
         print(f"   Total Time: {total_time:.2f} seconds")
         print(f"   RAM Change: {final_stats['ram_used_gb'] - initial_stats['ram_used_gb']:+.2f}GB")
         print(f"   Peak RAM Usage: {max(step5_stats['ram_percent'], post_gen_stats['ram_percent']):.1f}%")
+        print(f"   Final RAM Usage: {final_stats['ram_percent']:.1f}%")
         if device == "cpu":
             print(f"   CPU Processing: Successful without GPU acceleration")
         else:
             print(f"   GPU Processing: {'Streaming' if use_streaming else 'Standard'} mode")
             
         return response.strip()
+        
     except Exception as e:
+        print(f"❌ Error in generate_answer: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Emergency cleanup
+        print("\n🚨 Emergency cleanup procedure activated...")
+        if 'model' in locals():
+            cleanup_variables(model)
+        if 'processor' in locals():
+            cleanup_variables(processor)
+        if 'inputs' in locals():
+            cleanup_variables(inputs)
+        if 'generation' in locals():
+            cleanup_variables(generation)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()  # Force garbage collection
+        
+        # Print final system state for debugging
+        error_stats = print_system_stats("After Error")
+        
         logging.error(f"Error generating Gemma response: {e}")
-        print_system_stats("Error State")
         return f"Error generating response: {str(e)}"
 
 
