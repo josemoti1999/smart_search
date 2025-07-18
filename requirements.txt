@@ -1,0 +1,10 @@
+flask
+torch
+transformers
+sentence-transformers
+faiss-cpu
+PyPDF2
+python-docx
+psutil
+bitsandbytes
+accelerate
