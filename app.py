@@ -17,7 +17,8 @@ import logging
 import sqlite3
 import numpy as np
 from pathlib import Path
-from transformers import AutoProcessor, Gemma3nForConditionalGeneration, BitsAndBytesConfig
+from transformers import AutoProcessor, GemmaForCausalLM, BitsAndBytesConfig
+from memory_helper import get_system_stats, print_system_stats, check_memory_pressure, cleanup_variables
 # from langchain.vectorstores import FAISS
 # from langchain.embeddings import HuggingFaceEmbeddings
 # from langchain.docstore.document import Document
@@ -32,52 +33,89 @@ DOCUMENTS_FOLDER = r"C:\Users\josea\OneDrive\Documents"
 
 # Directory for storing models
 MODELS_CACHE_PATH = os.path.join(os.path.dirname(__file__), 'models_cache')
-GEMMA_CACHE_PATH = os.path.join(MODELS_CACHE_PATH, 'gemma-3n-e2b-it')
+GEMMA_CACHE_PATH = os.path.join(MODELS_CACHE_PATH, 'gemma-2b-it')
 
 # Create models cache directory if it doesn't exist
 os.makedirs(MODELS_CACHE_PATH, exist_ok=True)
 
-def get_system_stats():
-    """Get current system CPU and RAM statistics."""
-    cpu_percent = psutil.cpu_percent(interval=0.1)
-    memory = psutil.virtual_memory()
+def load_model_once():
+    """Load the model once and cache it in memory for subsequent uses."""
+    global _cached_model, _cached_processor, _model_device
     
-    stats = {
-        'cpu_percent': cpu_percent,
-        'ram_total_gb': memory.total / (1024**3),
-        'ram_used_gb': memory.used / (1024**3),
-        'ram_available_gb': memory.available / (1024**3),
-        'ram_percent': memory.percent
-    }
-    return stats
-
-def print_system_stats(step_name="System"):
-    """Print current system statistics in a formatted way."""
-    stats = get_system_stats()
-    print(f"\n📊 {step_name} Resources:")
-    print(f"   CPU Usage: {stats['cpu_percent']:.1f}%")
-    print(f"   RAM: {stats['ram_used_gb']:.2f}GB / {stats['ram_total_gb']:.2f}GB ({stats['ram_percent']:.1f}%)")
-    print(f"   Available RAM: {stats['ram_available_gb']:.2f}GB")
-    return stats
-
-def cleanup_variables(*variables):
-    """Clean up specified variables and run garbage collection."""
-    for var in variables:
-        if var is not None:
-            del var
-    gc.collect()
+    if _cached_model is not None:
+        print("✅ Using cached model from previous load")
+        return _cached_model, _cached_processor, _model_device
+    
+    print("🚀 Loading model for the first time - will be cached for future use...")
+    
+    # Determine device configuration
     if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-def check_memory_pressure():
-    """Check if system is under memory pressure."""
-    stats = get_system_stats()
-    return stats['ram_percent'] > 85.0  # Return True if RAM usage > 85%
-
-def check_memory_pressure():
-    """Check if system is under memory pressure."""
-    stats = get_system_stats()
-    return stats['ram_percent'] > 85.0  # Return True if RAM usage > 85%
+        total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        if total_memory <= 4.0:
+            device = "cuda:0"
+            use_streaming = True
+        else:
+            device = "cuda:0" 
+            use_streaming = False
+    else:
+        print("❌ No GPU available")
+        return None, None, None
+    
+    # Load processor once and cache it
+    _cached_processor = AutoProcessor.from_pretrained(
+        GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
+        local_files_only=os.path.exists(GEMMA_CACHE_PATH)
+    )
+    
+    # Configure quantization
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16,
+        llm_int8_enable_fp32_cpu_offload=True,
+    )
+    
+    # Load model once and cache it
+    if use_streaming:
+        offload_dir = os.path.join(os.path.dirname(__file__), 'model_streaming')
+        os.makedirs(offload_dir, exist_ok=True)
+        
+        _cached_model = GemmaForCausalLM.from_pretrained(
+            GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
+            torch_dtype=torch.float16,
+            quantization_config=quantization_config,
+            device_map="auto",
+            offload_buffers=True,
+            offload_folder=offload_dir,
+            max_memory={0: f"{total_memory * 0.9:.1f}GB"},
+            low_cpu_mem_usage=True,
+            offload_state_dict=True,
+            local_files_only=os.path.exists(GEMMA_CACHE_PATH),
+            cache_dir=MODELS_CACHE_PATH
+        ).eval()
+    else:
+        _cached_model = GemmaForCausalLM.from_pretrained(
+            GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
+            torch_dtype=torch.float16,
+            quantization_config=quantization_config,
+            device_map="auto",
+            max_memory={0: f"{total_memory * 0.9:.1f}GB"},
+            low_cpu_mem_usage=True,
+            local_files_only=os.path.exists(GEMMA_CACHE_PATH),
+            cache_dir=MODELS_CACHE_PATH
+        ).eval()
+    
+    _model_device = device
+    print("✅ Model loaded and cached successfully - subsequent searches will be much faster!")
+    
+    # Save to cache if needed
+    if not os.path.exists(GEMMA_CACHE_PATH):
+        print("💾 Saving model to local cache...")
+        _cached_model.save_pretrained(GEMMA_CACHE_PATH)
+        _cached_processor.save_pretrained(GEMMA_CACHE_PATH)
+    
+    return _cached_model, _cached_processor, _model_device
 
 def load_or_download_gemma():
     """Load Gemma model from local cache or download if not available."""
@@ -88,7 +126,7 @@ def load_or_download_gemma():
         # Check if model is already cached
         if os.path.exists(GEMMA_CACHE_PATH):
             logging.info("Loading Gemma model from local cache...")
-            model = Gemma3nForConditionalGeneration.from_pretrained(
+            model = GemmaForCausalLM.from_pretrained(
                 GEMMA_CACHE_PATH,
                 device_map=device,
                 torch_dtype=torch.bfloat16,
@@ -101,13 +139,13 @@ def load_or_download_gemma():
         else:
             logging.info("Downloading Gemma model for the first time...")
             # Download and save the model
-            model = Gemma3nForConditionalGeneration.from_pretrained(
-                "google/gemma-3n-e2b-it",
+            model = GemmaForCausalLM.from_pretrained(
+                "google/gemma-2b-it",
                 device_map=device,
                 torch_dtype=torch.bfloat16
             ).eval()
             print("Model loaded")
-            processor = AutoProcessor.from_pretrained("google/gemma-3n-e2b-it")
+            processor = AutoProcessor.from_pretrained("google/gemma-2b-it")
             
             # Save model and processor to local cache
             logging.info("Saving Gemma model to local cache...")
@@ -135,6 +173,11 @@ except Exception as e:
 
 # Don't initialize Gemma model at startup
 gemma_model, gemma_processor = None, None
+
+# Global model cache for persistent model loading
+_cached_model = None
+_cached_processor = None
+_model_device = None
 
 # --- Global In-Memory Storage ---
 # For simplicity, we'll store the embeddings and corresponding text chunks in memory.
@@ -496,24 +539,16 @@ def generate_gemma_response(context, query):
         step2_start = time.time()
         
         processor = AutoProcessor.from_pretrained(
-            GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-3n-e2b-it",
+            GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
             local_files_only=os.path.exists(GEMMA_CACHE_PATH)
         )
         print(f"Processor loaded in {time.time() - step2_start:.2f} seconds")
         
+        # Gemma 2B uses a simpler message format without nested content structure
         messages = [
             {
-                "role": "system",
-                "content": [{"type": "text", "text": "You are a helpful assistant. Use the provided context to answer questions accurately."}]
-            },
-            {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "text", 
-                        "text": f"Context: {context}\n\nQuestion: {query}\n\nProvide a clear and concise answer based on the given context."
-                    }
-                ]
+                "content": f"Context: {context}\n\nQuestion: {query}\n\nProvide a clear and concise answer based on the given context."
             }
         ]
         print(f"Messages prepared. Total step time: {time.time() - step2_start:.2f} seconds")
@@ -523,13 +558,25 @@ def generate_gemma_response(context, query):
         print("\nStep 3: Processing Input Template")
         step3_start = time.time()
         
-        inputs = processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt"
-        )
+        # For Gemma 2B, use the tokenizer directly with proper formatting
+        try:
+            inputs = processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt"
+            )
+        except Exception as template_error:
+            print(f"Chat template failed, using manual formatting: {template_error}")
+            # Fallback to manual formatting for Gemma 2B
+            formatted_text = f"<bos><start_of_turn>user\nContext: {context}\n\nQuestion: {query}\n\nProvide a clear and concise answer based on the given context.<end_of_turn>\n<start_of_turn>model\n"
+            inputs = processor(
+                formatted_text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=2048
+            )
         
         input_len = inputs["input_ids"].shape[-1]
         print(f"Input sequence length: {input_len} tokens")
@@ -560,15 +607,14 @@ def generate_gemma_response(context, query):
             print(f"Currently Allocated: {allocated_memory:.2f}GB")
             print(f"Available for Model: {free_memory:.2f}GB")
             
-            # Adjust memory strategy based on available RAM and GPU
-            available_ram = step3_stats['ram_available_gb']
-            
-            if memory_pressure or available_ram < 3.0:
-                print(f"🔴 Low system RAM (Available: {available_ram:.1f}GB) - using CPU mode")
-                device = "cpu"
-                torch_dtype = torch.float32
-                use_streaming = False
-                use_quantization = False
+            # GPU-only strategy - no CPU fallback to prevent RAM crashes
+            if total_memory <= 4.0:  # For GPUs with 4GB or less
+                print(f"🧠 GPU has {total_memory:.1f}GB - using aggressive 4-bit quantization")
+                print("� Using maximum compression for limited GPU memory")
+                device = "cuda:0"
+                torch_dtype = torch.float16
+                use_streaming = True
+                use_quantization = True
             elif total_memory <= 8.0:  # For GPUs with 8GB or less
                 print(f"🧠 GPU has {total_memory:.1f}GB - using layer-by-layer streaming")
                 print("🔄 This allows using GPU with minimal memory footprint")
@@ -583,11 +629,9 @@ def generate_gemma_response(context, query):
                 use_streaming = False
                 use_quantization = True
         else:
-            print("No GPU available, using CPU mode")
-            device = "cpu"
-            torch_dtype = torch.float32
-            use_streaming = False
-            use_quantization = False
+            print("❌ No GPU available - exiting to prevent RAM crash")
+            print("💡 This application requires a CUDA-capable GPU")
+            return "Error: No GPU available. This application requires CUDA support to prevent system memory overload."
             
         print(f"Selected device: {device}")
         print(f"Using quantization: {use_quantization}")
@@ -595,39 +639,40 @@ def generate_gemma_response(context, query):
         print(f"Memory configuration time: {time.time() - step4_start:.2f} seconds")
         step4_stats = print_system_stats("After Memory Config")
             
-        # Step 5: Load model with automatic resource detection
-        print("\nStep 5: Loading Model")
+        # Step 5: Load model - GPU ONLY to prevent RAM crashes
+        print("\nStep 5: Loading Model (GPU Only)")
         step5_start = time.time()
         
-        print("Starting model load...")
+        print("Starting GPU-only model load...")
         
-        if device == "cpu":
-            print("Loading Gemma model on CPU")
-            
-            # Monitor memory during CPU loading
-            pre_load_stats = get_system_stats()
-            
-            try:
-                model = Gemma3nForConditionalGeneration.from_pretrained(
-                    GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-3n-e2b-it",
-                    torch_dtype=torch_dtype,
-                    device_map="cpu",
-                    low_cpu_mem_usage=True,
-                    local_files_only=os.path.exists(GEMMA_CACHE_PATH)
-                ).eval()
-                
-                # Check memory after loading
-                post_load_stats = get_system_stats()
-                memory_used = post_load_stats['ram_used_gb'] - pre_load_stats['ram_used_gb']
-                
-                print(f"✅ Model loaded successfully on CPU")
-                print(f"📊 Memory used for model: {memory_used:.2f}GB")
-                    
-            except Exception as e:
-                print(f"❌ CPU model loading failed: {e}")
-                return f"Error loading model on CPU: {str(e)}"
-            
-        elif use_streaming:
+        # CPU loading disabled to prevent RAM crashes
+        # if device == "cpu":
+        #     print("Loading Gemma model on CPU")
+        #     
+        #     # Monitor memory during CPU loading
+        #     pre_load_stats = get_system_stats()
+        #     
+        #     try:
+        #         model = Gemma3nForConditionalGeneration.from_pretrained(
+        #             GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-3n-e2b-it",
+        #             torch_dtype=torch_dtype,
+        #             device_map="cpu",
+        #             low_cpu_mem_usage=True,
+        #             local_files_only=os.path.exists(GEMMA_CACHE_PATH)
+        #         ).eval()
+        #         
+        #         # Check memory after loading
+        #         post_load_stats = get_system_stats()
+        #         memory_used = post_load_stats['ram_used_gb'] - pre_load_stats['ram_used_gb']
+        #         
+        #         print(f"✅ Model loaded successfully on CPU")
+        #         print(f"📊 Memory used for model: {memory_used:.2f}GB")
+        #             
+        #     except Exception as e:
+        #         print(f"❌ CPU model loading failed: {e}")
+        #         return f"Error loading model on CPU: {str(e)}"
+        
+        if device == "cuda:0" and use_streaming:
             print("🧠 Loading Gemma model with layer-by-layer streaming for limited GPU")
             
             # Set up offload directory for layer streaming
@@ -636,78 +681,106 @@ def generate_gemma_response(context, query):
             
             # Calculate memory budget based on available RAM and GPU
             available_ram = step4_stats['ram_available_gb']
-            gpu_memory_budget = min(total_memory * 0.5, available_ram * 0.3)  # Conservative approach
+            gpu_memory_budget = min(total_memory * 0.9, available_ram * 0.9)  # Conservative approach
             
             print(f"Available System RAM: {available_ram:.2f}GB")
             print(f"GPU Memory Budget: {gpu_memory_budget:.2f}GB")
             
             # Configure quantization for memory efficiency
             quantization_config = BitsAndBytesConfig(
-                load_in_8bit=True,
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.float16,
                 llm_int8_enable_fp32_cpu_offload=True,
-                llm_int8_threshold=6.0,
-                bnb_8bit_compute_dtype=torch.float16,
-                bnb_8bit_use_double_quant=False,
             )
             
             # First attempt: Try with GPU + disk offloading
             try:
                 print("🚀 Attempting GPU loading with conservative memory limits...")
-                model = Gemma3nForConditionalGeneration.from_pretrained(
-                    GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-3n-e2b-it",
+                model = GemmaForCausalLM.from_pretrained(
+                    GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
                     torch_dtype=torch_dtype,
                     quantization_config=quantization_config,
                     device_map="auto",
+                    offload_buffers=True,
                     offload_folder=offload_dir,
-                    max_memory={0: f"{gpu_memory_budget:.1f}GB"},
+                    max_memory={0: f"{gpu_memory_budget*3:.1f}GB"},
                     low_cpu_mem_usage=True,
                     offload_state_dict=True,
-                    local_files_only=os.path.exists(GEMMA_CACHE_PATH)
+                    local_files_only=os.path.exists(GEMMA_CACHE_PATH),
+                    cache_dir=MODELS_CACHE_PATH  # Force use of our cache directory
                 ).eval()
                 print("✅ Model loaded successfully with GPU + disk offloading!")
                 
-            except Exception as gpu_error:
-                print(f"⚠️ GPU loading failed: {str(gpu_error)}")
-                print("🔄 Falling back to CPU without quantization...")
+                # Save to local cache if downloaded fresh
+                if not os.path.exists(GEMMA_CACHE_PATH):
+                    print("💾 Saving model to local cache for future use...")
+                    try:
+                        model.save_pretrained(GEMMA_CACHE_PATH)
+                        processor.save_pretrained(GEMMA_CACHE_PATH)
+                        print("✅ Model cached successfully!")
+                    except Exception as save_error:
+                        print(f"⚠️ Failed to save to local cache: {save_error}")
                 
-                # Clean up before fallback
+            except Exception as gpu_error:
+                print(f"❌ GPU loading failed: {str(gpu_error)}")
+                print("� CPU fallback disabled to prevent RAM crashes")
+                print("💡 Try closing other applications to free GPU memory")
+                
+                # Clean up before exiting
                 cleanup_variables(quantization_config)
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                 
-                # Fallback: Load on CPU without quantization to avoid type conflicts
-                model = Gemma3nForConditionalGeneration.from_pretrained(
-                    GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-3n-e2b-it",
-                    torch_dtype=torch.float32,
-                    device_map="cpu",
-                    low_cpu_mem_usage=True,
-                    local_files_only=os.path.exists(GEMMA_CACHE_PATH)
-                ).eval()
-                print("✅ Model loaded successfully on CPU without quantization!")
-                device = "cpu"  # Update device for input handling
+                return f"Error: GPU model loading failed and CPU fallback disabled to prevent RAM overload. GPU Error: {str(gpu_error)}"
             
         else:
-            print("Loading Gemma model on GPU with 8-bit quantization")
+            print("Loading Gemma model on GPU with 4-bit quantization")
             # Configure quantization for GPU
             quantization_config = BitsAndBytesConfig(
-                load_in_8bit=True,
-                llm_int8_enable_fp32_cpu_offload=True,
-                llm_int8_threshold=6.0,
-                bnb_8bit_compute_dtype=torch.float16,
-                bnb_8bit_use_double_quant=False,
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.float16,
+                llm_int8_enable_fp32_cpu_offload=False,  # Disabled to prevent CPU fallback
             )
             
-            model = Gemma3nForConditionalGeneration.from_pretrained(
-                GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-3n-e2b-it",
-                torch_dtype=torch_dtype,
-                quantization_config=quantization_config,
-                device_map="auto",
-                max_memory={0: "6GB"},
-                low_cpu_mem_usage=True,
-                local_files_only=os.path.exists(GEMMA_CACHE_PATH)
-            ).eval()
-            print("✅ Model loaded successfully on GPU with quantization")
+            try:
+                model = GemmaForCausalLM.from_pretrained(
+                    GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
+                    torch_dtype=torch_dtype,
+                    quantization_config=quantization_config,
+                    device_map="auto",
+                    max_memory={0: f"{total_memory * 0.9:.1f}GB"},  # Use 90% of GPU memory
+                    low_cpu_mem_usage=True,
+                    local_files_only=os.path.exists(GEMMA_CACHE_PATH),
+                    cache_dir=MODELS_CACHE_PATH  # Force use of our cache directory
+                ).eval()
+                print("✅ Model loaded successfully on GPU with 4-bit quantization")
+                
+                # Save to local cache if downloaded fresh
+                if not os.path.exists(GEMMA_CACHE_PATH):
+                    print("💾 Saving model to local cache for future use...")
+                    try:
+                        model.save_pretrained(GEMMA_CACHE_PATH)
+                        processor.save_pretrained(GEMMA_CACHE_PATH)
+                        print("✅ Model cached successfully!")
+                    except Exception as save_error:
+                        print(f"⚠️ Failed to save to local cache: {save_error}")
+                
+            except Exception as gpu_error:
+                print(f"❌ GPU loading failed: {str(gpu_error)}")
+                print("🚫 CPU fallback disabled to prevent RAM crashes")
+                
+                # Clean up before exiting
+                cleanup_variables(quantization_config)
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                return f"Error: GPU model loading failed and CPU fallback disabled. GPU Error: {str(gpu_error)}"
         
         # Clean up configuration variables
         if 'quantization_config' in locals():
@@ -756,14 +829,23 @@ def generate_gemma_response(context, query):
             max_tokens=200
             
             try:
+                # For Gemma models, handle tokenizer access properly
+                if hasattr(processor, 'pad_token_id'):
+                    pad_token_id = processor.pad_token_id
+                    eos_token_id = processor.eos_token_id
+                else:
+                    # Fallback for AutoProcessor
+                    pad_token_id = getattr(processor, 'pad_token_id', None)
+                    eos_token_id = getattr(processor, 'eos_token_id', None)
+                
                 # Use simpler generation parameters that work with Gemma
                 generation = model.generate(
                     **inputs,
                     max_new_tokens=max_tokens,
                     do_sample=True,
                     temperature=0.7,
-                    pad_token_id=processor.tokenizer.pad_token_id,
-                    eos_token_id=processor.tokenizer.eos_token_id,
+                    pad_token_id=pad_token_id,
+                    eos_token_id=eos_token_id,
                     use_cache=True
                 )
                 
@@ -1039,7 +1121,8 @@ def search_endpoint():
         gemma_start = time.time()
         # Generate a response using Gemma
         gemma_response = generate_gemma_response(combined_context, query)
-        print(f"Gemma response generated in {time.time() - gemma_start:.2f} seconds")
+        gemma_generation_time = time.time() - gemma_start
+        print(f"Gemma response generated in {gemma_generation_time:.2f} seconds")
         
         # Clean up context data
         cleanup_variables(combined_context)
@@ -1065,6 +1148,7 @@ def search_endpoint():
         return jsonify({
             'results': final_results,
             'processing_time': f"{total_time:.2f}",
+            'gemma_generation_time': f"{gemma_generation_time:.2f}",
             'system_stats': {
                 'ram_usage_percent': final_stats['ram_percent'],
                 'peak_ram_percent': max(search_stats['ram_percent'], final_stats['ram_percent']),
