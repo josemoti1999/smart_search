@@ -283,6 +283,8 @@ All settings are stored in `~/.smartsearch/config.json` and managed through the 
 | `electron` | Desktop shell |
 | `electron-builder` | DMG packaging |
 
+
+
 ---
 
 ## Why fastembed instead of PyTorch?
