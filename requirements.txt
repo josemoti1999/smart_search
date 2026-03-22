@@ -9,3 +9,6 @@ psutil
 bitsandbytes
 accelerate
 google-generativeai
+groq
+python-dotenv
+rank-bm25

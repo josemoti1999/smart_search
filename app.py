@@ -21,6 +21,7 @@ import numpy as np
 from pathlib import Path
 from memory_helper import get_system_stats, print_system_stats, check_memory_pressure, cleanup_variables
 from groq import Groq
+from rank_bm25 import BM25Okapi
 # from langchain.vectorstores import FAISS
 # from langchain.embeddings import HuggingFaceEmbeddings
 # from langchain.docstore.document import Document
@@ -253,6 +254,13 @@ def index_documents():
         faiss.write_index(index, os.path.join(FAISS_INDEX_PATH, 'index.faiss'))
         with open(os.path.join(FAISS_INDEX_PATH, 'metadata.pkl'), 'wb') as f:
             pickle.dump(all_metadata, f)
+
+        # Build and save BM25 index for hybrid search
+        logging.info("Building BM25 index...")
+        tokenized_corpus = [text.lower().split() for text in all_texts]
+        bm25 = BM25Okapi(tokenized_corpus)
+        with open(os.path.join(FAISS_INDEX_PATH, 'bm25.pkl'), 'wb') as f:
+            pickle.dump(bm25, f)
 
         logging.info(f"Successfully indexed {len(all_texts)} chunks from {supported_files} files.")
         indexing_progress["status"] = "completed"
@@ -488,70 +496,76 @@ def search_endpoint():
         query_embedding = query_embedding.astype('float32')
         print(f"Query embedding converted to float32 in {time.time() - faiss_prep_start:.2f} seconds")
         
-        print("\nStep 4: Loading FAISS Index")
+        print("\nStep 4: Loading Indices")
         index_load_start = time.time()
 
-        # Check if FAISS index exists
         if not os.path.exists(os.path.join(FAISS_INDEX_PATH, 'index.faiss')):
-            print("Error: FAISS index not found")
             return jsonify({'error': 'No documents indexed. Please index documents first.'}), 400
 
         # Load FAISS index
         import faiss
-        index = faiss.read_index(os.path.join(FAISS_INDEX_PATH, 'index.faiss'))
-        print(f"FAISS index loaded in {time.time() - index_load_start:.2f} seconds")
-        
-        # Move to GPU if available and system has resources
-        faiss_stats = get_system_stats()
-        if torch.cuda.is_available() and faiss_stats['ram_percent'] < 80:
-            gpu_start = time.time()
-            try:
-                res = faiss.StandardGpuResources()
-                index = faiss.index_cpu_to_gpu(res, 0, index)
-                print(f"Index moved to GPU in {time.time() - gpu_start:.2f} seconds")
-            except Exception as e:
-                print(f"Failed to move FAISS to GPU: {e}, using CPU")
+        faiss_index = faiss.read_index(os.path.join(FAISS_INDEX_PATH, 'index.faiss'))
 
-        print("\nStep 5: Performing FAISS Search")
-        search_start = time.time()
-        D, I = index.search(query_embedding.reshape(1, -1), k=5)
-        print(f"FAISS search completed in {time.time() - search_start:.2f} seconds")
-        
-        if len(I) == 0 or len(I[0]) == 0:
-            print("Error: No relevant documents found")
-            return jsonify({'error': 'No relevant documents found'}), 404
-            
-        print("\nStep 6: Processing Search Results")
-        results_start = time.time()
-        
         # Load metadata
-        print("Loading metadata...")
         with open(os.path.join(FAISS_INDEX_PATH, 'metadata.pkl'), 'rb') as f:
             metadata = pickle.load(f)
-        print(f"Metadata loaded in {time.time() - results_start:.2f} seconds")
-        
-        # Clean up FAISS resources
-        cleanup_variables(index, query_embedding)
-        
-        # Filter results by file type if specified
-        print("Filtering and formatting results...")
+
+        # Load BM25 index (fall back to FAISS-only if not found)
+        bm25_path = os.path.join(FAISS_INDEX_PATH, 'bm25.pkl')
+        bm25 = None
+        if os.path.exists(bm25_path):
+            with open(bm25_path, 'rb') as f:
+                bm25 = pickle.load(f)
+        print(f"Indices loaded in {time.time() - index_load_start:.2f} seconds")
+
+        top_k = 5
+        candidate_k = top_k * 3  # fetch more candidates before re-ranking
+
+        print("\nStep 5: Hybrid Search (FAISS + BM25 via RRF)")
+        search_start = time.time()
+
+        # --- FAISS semantic search ---
+        D, I = faiss_index.search(query_embedding.reshape(1, -1), k=candidate_k)
+        faiss_indices = [int(idx) for idx in I[0] if idx < len(metadata)]
+
+        # --- BM25 keyword search ---
+        bm25_indices = []
+        if bm25 is not None:
+            tokenized_query = query.lower().split()
+            bm25_scores = bm25.get_scores(tokenized_query)
+            bm25_indices = list(np.argsort(bm25_scores)[::-1][:candidate_k])
+
+        # --- Reciprocal Rank Fusion ---
+        RRF_K = 60
+        rrf_scores = {}
+        for rank, idx in enumerate(faiss_indices):
+            rrf_scores[idx] = rrf_scores.get(idx, 0.0) + 1.0 / (rank + RRF_K)
+        for rank, idx in enumerate(bm25_indices):
+            if idx < len(metadata):
+                rrf_scores[idx] = rrf_scores.get(idx, 0.0) + 1.0 / (rank + RRF_K)
+
+        # Sort by combined RRF score, take top_k
+        ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        print(f"Hybrid search completed in {time.time() - search_start:.2f} seconds "
+              f"({'FAISS + BM25' if bm25 else 'FAISS only'})")
+
+        print("\nStep 6: Processing Search Results")
+        results_start = time.time()
+
         results = []
-        for idx in I[0]:
-            if idx < len(metadata):  # Ensure the index is valid
-                meta = metadata[idx]
-                if file_type == 'all files' or file_type == 'all' or meta['source'].lower().endswith(get_file_extension(file_type)):
-                    results.append({
-                        'text': meta['text'],
-                        'source': meta['source'],
-                        'full_path': meta.get('full_path', meta['source']),
-                        'score': float(1.0 / (1.0 + D[0][list(I[0]).index(idx)]))
-                    })
-        
-        # Clean up search data
-        cleanup_variables(D, I, metadata)
-        
+        for idx, rrf_score in ranked:
+            meta = metadata[idx]
+            if file_type == 'all files' or file_type == 'all' or meta['source'].lower().endswith(get_file_extension(file_type)):
+                results.append({
+                    'text': meta['text'],
+                    'source': meta['source'],
+                    'full_path': meta.get('full_path', meta['source']),
+                    'score': round(rrf_score, 4)
+                })
+
+        cleanup_variables(faiss_index, query_embedding, D, I, metadata)
+
         if not results:
-            print("Error: No matches found for the specified file type")
             return jsonify({'error': 'No matches found for the specified file type'}), 404
 
         print(f"Found {len(results)} relevant documents")
@@ -598,6 +612,7 @@ def search_endpoint():
             'processing_time': f"{total_time:.2f}",
             'gemma_generation_time': f"{gemma_generation_time:.2f}",
             'model_used': 'llama-3.1-8b-instant (Groq)',
+            'search_method': 'Hybrid (FAISS + BM25)' if bm25 else 'Semantic (FAISS)',
             'system_stats': {
                 'ram_usage_percent': final_stats['ram_percent'],
                 'peak_ram_percent': max(search_stats['ram_percent'], final_stats['ram_percent']),

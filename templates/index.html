@@ -413,7 +413,7 @@
                 });
                 const data = await response.json();
                 if (response.ok) {
-                    displayResults(data.results, data.processing_time, data.gemma_generation_time, data.model_used);
+                    displayResults(data.results, data.processing_time, data.gemma_generation_time, data.model_used, data.search_method);
                 } else {
                     showStatus(data.error || 'Search failed.', 'error');
                 }
@@ -427,7 +427,7 @@
         });
 
         // ---- Display results ----
-        function displayResults(results, totalTime, gemmaTime, modelUsed) {
+        function displayResults(results, totalTime, gemmaTime, modelUsed, searchMethod) {
             if (!results || results.length === 0) {
                 showStatus('No relevant information found in your documents.', 'info');
                 return;
@@ -457,6 +457,7 @@
                     <span>·</span>
                     <span><strong>Chunks:</strong> ${chunkResults.length}</span>
                     ${gemmaTime ? `<span>·</span><span><strong>AI:</strong> ${gemmaTime}s</span>` : ''}
+                    ${searchMethod ? `<span>·</span><span class="text-blue-600 font-semibold">${searchMethod}</span>` : ''}
                 </div>`;
 
             const chunksHtml = chunkResults.map(result => {

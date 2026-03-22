@@ -14,9 +14,9 @@
 
 1. Scans `~/Documents` and `~/Downloads` for PDF and DOCX files (up to 100)
 2. Chunks and embeds the text using `sentence-transformers`
-3. Stores vectors in a local FAISS index
-4. On each search, retrieves the most similar chunks and sends them to Groq's free LLM
-5. Returns an AI summary + the original matching chunks with source file paths
+3. Builds a FAISS vector index (semantic) **and** a BM25 keyword index
+4. On each search, runs both indices and combines results using **Reciprocal Rank Fusion**
+5. Sends the top-ranked chunks to Groq's free LLM and returns an AI summary + source file paths
 
 ---
 
@@ -144,7 +144,7 @@ Open **http://localhost:5001** in your browser.
 | 1 | Click **Index Files** | Scans `~/Documents` + `~/Downloads`, extracts text, builds FAISS index |
 | 2 | Watch the progress bar | Updates per file → switches to "Encoding chunks…" at 100% |
 | 3 | Sidebar populates | Every indexed file appears with a green ✓ tick, grouped by folder |
-| 4 | Type a question | Semantic search finds the most relevant chunks |
+| 4 | Type a question | Hybrid search (FAISS + BM25) finds the most relevant chunks |
 | 5 | See results | AI summary at top, matching chunks below with file path + match % |
 | 6 | Click ← to hide sidebar | Sidebar collapses; a → tab remains to restore it |
 
@@ -195,6 +195,7 @@ smart_search/
 | `PyPDF2` | 3.0.1 | PDF text extraction |
 | `python-docx` | 1.2.0 | DOCX text extraction |
 | `python-dotenv` | 1.2.1 | Load `.env` file |
+| `rank-bm25` | 0.2.2 | BM25 keyword search index |
 | `numpy` | 2.0.2 | Numerical operations |
 | `psutil` | 7.2.2 | System memory monitoring |
 
@@ -286,7 +287,7 @@ Edit these constants at the top of `app.py` to customise behaviour:
 - [ ] ChromaDB as an alternative to FAISS (persistent, easier metadata filtering)
 - [ ] Drag-and-drop file upload instead of scanning entire folders
 - [ ] Page number tracking in PDF chunks
-- [ ] Hybrid search (semantic + keyword BM25)
+- [x] Hybrid search (semantic FAISS + keyword BM25 via Reciprocal Rank Fusion)
 
 ---
 
