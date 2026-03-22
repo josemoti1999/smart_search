@@ -49,3 +49,15 @@ ENV/
 .DS_Store
 Thumbs.db
 .env
+
+# PyInstaller
+*.spec.bak
+dist/
+build/
+
+# Electron build output
+electron/node_modules/
+electron/dist/
+
+# Smart Search user config
+~/.smartsearch/

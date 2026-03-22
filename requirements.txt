@@ -1,14 +1,10 @@
 flask
-torch
-transformers
-sentence-transformers
+fastembed
 faiss-cpu
 PyPDF2
 python-docx
 psutil
-bitsandbytes
-accelerate
-google-generativeai
 groq
 python-dotenv
 rank-bm25
+numpy

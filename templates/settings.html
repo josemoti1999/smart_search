@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Search — Settings</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .spinner { border:3px solid rgba(0,0,0,0.1); width:16px; height:16px; border-radius:50%; border-left-color:#3b82f6; animation:spin 0.8s ease infinite; display:inline-block; }
+        @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 min-h-screen">
+
+<div class="max-w-2xl mx-auto px-6 py-12">
+
+    <!-- Header -->
+    <div class="flex items-center gap-3 mb-10">
+        <a href="/" class="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+            </svg>
+        </a>
+        <!-- Gemini-style logo -->
+        <svg width="32" height="32" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <linearGradient id="starGradS" x1="0" y1="0" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stop-color="#4f8ef7"/>
+                    <stop offset="50%" stop-color="#7c5cfc"/>
+                    <stop offset="100%" stop-color="#a855f7"/>
+                </linearGradient>
+            </defs>
+            <path d="M22 2 C21 12 12 21 2 22 C12 23 21 32 22 42 C23 32 32 23 42 22 C32 21 23 12 22 2 Z" fill="url(#starGradS)"/>
+            <text x="22" y="27" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Inter', sans-serif" font-size="14" font-weight="700" fill="white">S</text>
+        </svg>
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Settings</h1>
+            <p class="text-sm text-gray-500 mt-0.5">Configure Smart Search for your machine</p>
+        </div>
+    </div>
+
+    <!-- First-run banner -->
+    {% if config.first_run %}
+    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-8 flex gap-3">
+        <svg class="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <div>
+            <p class="text-sm font-semibold text-blue-800">Welcome to Smart Search!</p>
+            <p class="text-sm text-blue-700 mt-0.5">Add your Groq API key below to get started. It's free — no credit card needed.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Status message -->
+    <div id="status-msg" class="hidden mb-6 p-3 rounded-lg text-sm text-center"></div>
+
+    <form id="settings-form" class="space-y-8">
+
+        <!-- ── API Key ── -->
+        <section class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+            <h2 class="text-base font-semibold text-gray-900 mb-1">Groq API Key</h2>
+            <p class="text-sm text-gray-500 mb-4">
+                Required for AI summaries.
+                <a href="https://console.groq.com" target="_blank" class="text-blue-600 hover:underline">Get a free key →</a>
+                (14,400 requests/day, no credit card)
+            </p>
+            <div class="flex gap-2">
+                <input
+                    type="password"
+                    id="groq-api-key"
+                    name="groq_api_key"
+                    value="{{ config.groq_api_key_display }}"
+                    placeholder="gsk_..."
+                    autocomplete="off"
+                    class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                <button type="button" id="test-key-btn"
+                    class="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+                    <span id="test-key-text">Test Key</span>
+                    <div id="test-key-spinner" class="spinner hidden"></div>
+                </button>
+            </div>
+            <div id="key-result" class="mt-2 text-xs hidden"></div>
+
+            <!-- Model selector -->
+            <div class="mt-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1.5">LLM Model</label>
+                <select id="groq-model" name="groq_model"
+                    class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                    <option value="llama-3.1-8b-instant" {% if config.groq_model == 'llama-3.1-8b-instant' %}selected{% endif %}>llama-3.1-8b-instant (fastest)</option>
+                    <option value="llama-3.3-70b-versatile" {% if config.groq_model == 'llama-3.3-70b-versatile' %}selected{% endif %}>llama-3.3-70b-versatile (smarter)</option>
+                    <option value="mixtral-8x7b-32768" {% if config.groq_model == 'mixtral-8x7b-32768' %}selected{% endif %}>mixtral-8x7b-32768</option>
+                </select>
+            </div>
+        </section>
+
+        <!-- ── Scan Folders ── -->
+        <section class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+            <h2 class="text-base font-semibold text-gray-900 mb-1">Scan Folders</h2>
+            <p class="text-sm text-gray-500 mb-4">PDF and DOCX files in these folders will be indexed.</p>
+
+            <div id="folder-list" class="space-y-2 mb-3">
+                {% for folder in config.scan_folders %}
+                <div class="folder-row flex items-center gap-2">
+                    <input type="text" value="{{ folder }}"
+                        class="folder-input flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g. /Users/you/Documents">
+                    <button type="button" onclick="removeFolder(this)"
+                        class="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                    {% if loop.first and loop.last == false or true %}
+                    <button type="button" onclick="browseFolderFor(this.previousElementSibling)"
+                        class="browse-btn hidden p-2 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-500 transition-colors flex-shrink-0" title="Browse…">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+                        </svg>
+                    </button>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+
+            <button type="button" onclick="addFolder()"
+                class="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                Add folder
+            </button>
+        </section>
+
+        <!-- ── Indexing settings ── -->
+        <section class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+            <h2 class="text-base font-semibold text-gray-900 mb-4">Indexing</h2>
+            <div class="grid grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Max files</label>
+                    <input type="number" id="max-files" name="max_files" value="{{ config.max_files }}" min="1" max="500"
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <p class="text-xs text-gray-400 mt-1">Cap per index run</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Chunk size</label>
+                    <input type="number" id="chunk-size" name="chunk_size" value="{{ config.chunk_size }}" min="64" max="1024"
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <p class="text-xs text-gray-400 mt-1">Words per chunk</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Chunk overlap</label>
+                    <input type="number" id="chunk-overlap" name="chunk_overlap" value="{{ config.chunk_overlap }}" min="0" max="256"
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <p class="text-xs text-gray-400 mt-1">Words overlap</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── Save button ── -->
+        <div class="flex items-center justify-between">
+            <a href="/" class="text-sm text-gray-500 hover:text-gray-700">← Back to search</a>
+            <button type="submit" id="save-btn"
+                class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors shadow-sm">
+                <span id="save-btn-text">Save Settings</span>
+                <div id="save-spinner" class="spinner hidden" style="border-left-color:white"></div>
+            </button>
+        </div>
+
+    </form>
+</div>
+
+<script>
+    // Show browse buttons if running inside Electron
+    if (window.electron && window.electron.isElectron) {
+        document.querySelectorAll('.browse-btn').forEach(btn => btn.classList.remove('hidden'));
+    }
+
+    async function browseFolderFor(input) {
+        if (window.electron) {
+            const folder = await window.electron.openFolderDialog();
+            if (folder) input.value = folder;
+        }
+    }
+
+    function addFolder() {
+        const list = document.getElementById('folder-list');
+        const row = document.createElement('div');
+        row.className = 'folder-row flex items-center gap-2';
+        row.innerHTML = `
+            <input type="text" value=""
+                class="folder-input flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="/Users/you/SomeFolder">
+            <button type="button" onclick="removeFolder(this)"
+                class="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+            <button type="button" onclick="browseFolderFor(this.previousElementSibling)"
+                class="browse-btn ${window.electron ? '' : 'hidden'} p-2 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-500 transition-colors flex-shrink-0" title="Browse…">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+                </svg>
+            </button>`;
+        list.appendChild(row);
+        row.querySelector('input').focus();
+    }
+
+    function removeFolder(btn) {
+        const rows = document.querySelectorAll('.folder-row');
+        if (rows.length <= 1) { showStatus('You need at least one scan folder.', 'warning'); return; }
+        btn.closest('.folder-row').remove();
+    }
+
+    document.getElementById('test-key-btn').addEventListener('click', async () => {
+        const key = document.getElementById('groq-api-key').value.trim();
+        const btn = document.getElementById('test-key-btn');
+        const spinner = document.getElementById('test-key-spinner');
+        const resultEl = document.getElementById('key-result');
+        btn.disabled = true;
+        spinner.classList.remove('hidden');
+        document.getElementById('test-key-text').textContent = 'Testing…';
+        resultEl.classList.add('hidden');
+
+        try {
+            const res = await fetch('/settings/test-api-key', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ groq_api_key: key }),
+            });
+            const data = await res.json();
+            resultEl.classList.remove('hidden');
+            if (data.status === 'ok') {
+                resultEl.className = 'mt-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1';
+                resultEl.textContent = '✓ ' + data.message;
+            } else {
+                resultEl.className = 'mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1';
+                resultEl.textContent = '✗ ' + data.message;
+            }
+        } catch(e) {
+            resultEl.classList.remove('hidden');
+            resultEl.className = 'mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1';
+            resultEl.textContent = 'Network error: ' + e.message;
+        } finally {
+            btn.disabled = false;
+            spinner.classList.add('hidden');
+            document.getElementById('test-key-text').textContent = 'Test Key';
+        }
+    });
+
+    document.getElementById('settings-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const saveBtn = document.getElementById('save-btn');
+        const saveSpinner = document.getElementById('save-spinner');
+        saveBtn.disabled = true;
+        saveSpinner.classList.remove('hidden');
+        document.getElementById('save-btn-text').textContent = 'Saving…';
+
+        const folders = [...document.querySelectorAll('.folder-input')].map(i => i.value.trim()).filter(Boolean);
+
+        const payload = {
+            scan_folders: folders,
+            groq_api_key: document.getElementById('groq-api-key').value.trim(),
+            groq_model: document.getElementById('groq-model').value,
+            max_files: parseInt(document.getElementById('max-files').value) || 100,
+            chunk_size: parseInt(document.getElementById('chunk-size').value) || 256,
+            chunk_overlap: parseInt(document.getElementById('chunk-overlap').value) || 32,
+        };
+
+        try {
+            const res = await fetch('/settings/save', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (data.status === 'saved') {
+                showStatus('Settings saved!', 'success');
+                setTimeout(() => { window.location.href = '/' }, 1200);
+            } else {
+                showStatus('Save failed.', 'error');
+            }
+        } catch(e) {
+            showStatus('Network error: ' + e.message, 'error');
+        } finally {
+            saveBtn.disabled = false;
+            saveSpinner.classList.add('hidden');
+            document.getElementById('save-btn-text').textContent = 'Save Settings';
+        }
+    });
+
+    function showStatus(msg, type) {
+        const el = document.getElementById('status-msg');
+        el.textContent = msg;
+        el.className = 'mb-6 p-3 rounded-lg text-sm text-center ';
+        const map = {
+            success: 'bg-green-100 text-green-800',
+            error: 'bg-red-100 text-red-800',
+            warning: 'bg-yellow-100 text-yellow-800',
+            info: 'bg-blue-100 text-blue-800',
+        };
+        el.className += map[type] || map.info;
+        el.classList.remove('hidden');
+        setTimeout(() => el.classList.add('hidden'), 5000);
+    }
+</script>
+</body>
+</html>

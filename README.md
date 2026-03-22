@@ -1,10 +1,11 @@
 # Smart Search
 
-> A local RAG (Retrieval-Augmented Generation) system that semantically searches your PDF and DOCX documents and generates AI-powered answers — all running on your machine.
+> A local RAG (Retrieval-Augmented Generation) desktop app that semantically searches your PDF and DOCX files and generates AI-powered answers — packaged as a native macOS app with no cloud dependencies except the Groq API.
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
-![Flask](https://img.shields.io/badge/Flask-3.1.3-lightgrey)
-![FAISS](https://img.shields.io/badge/FAISS-1.13.0-orange)
+![Electron](https://img.shields.io/badge/Electron-33-47848F)
+![Flask](https://img.shields.io/badge/Flask-backend-lightgrey)
+![FAISS](https://img.shields.io/badge/FAISS-vector_search-orange)
 ![Groq](https://img.shields.io/badge/LLM-Groq%20%7C%20llama--3.1--8b-green)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
@@ -12,72 +13,51 @@
 
 ## What It Does
 
-1. Scans `~/Documents` and `~/Downloads` for PDF and DOCX files (up to 100)
-2. Chunks and embeds the text using `sentence-transformers`
+1. You point it at folders containing PDF and DOCX files
+2. It chunks and embeds the text using a local ONNX model (`all-MiniLM-L6-v2`, ~22 MB, no GPU needed)
 3. Builds a FAISS vector index (semantic) **and** a BM25 keyword index
-4. On each search, runs both indices and combines results using **Reciprocal Rank Fusion**
+4. On each search, runs both indices and combines results via **Reciprocal Rank Fusion**
 5. Sends the top-ranked chunks to Groq's free LLM and returns an AI summary + source file paths
+6. Everything runs locally on your Mac — your documents never leave your machine
 
 ---
 
-## UI Preview
+## Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────────────┐
-│  ┌──────────────────────┐  ┌─────────────────────────────────────────┐│
-│  │  Indexed Documents ← │  │            🔍  Smart Search             ││
-│  │  [12 docs]           │  │                                         ││
-│  │  ────────────────    │  │  ┌─────────────────┐  ✅ 12 docs│0.8MB ││
-│  │  ~/Documents/        │  │  │  ↻  Index Files  │                   ││
-│  │  folder-name/        │  │  └─────────────────┘                   ││
-│  │  📄 document.pdf  ✓  │  │                                         ││
-│  │  📝 notes.docx    ✓  │  │  ██████████████████░░  Indexing 10/12  ││
-│  │                      │  │                                         ││
-│  │  ~/Downloads/        │  │  ┌─────────────────────────────────────┐││
-│  │  📄 report.pdf    ✓  │  │  │ ⋮  Ask a question about your docs 🔍│││
-│  │  ...                 │  │  └──┬──────────────────────────────────┘││
-│  │  ────────────────    │  │     │  ┌──────────────────┐             ││
-│  │  12 docs | 0.8 MB    │  │     │  │ 📄  All Files    │             ││
-│  └──────────────────────┘  │     │  │ 📝  Documents    │             ││
-│                             │     │  │ 📑  PDFs         │             ││
-│  → (tab to reopen sidebar) │     └──┴──────────────────┘             ││
-│                             │                                         ││
-│                             │  Results                                ││
-│                             │  Time: 1.4s · Chunks: 5 · AI: 0.8s    ││
-│                             │                                         ││
-│                             │  ┌─────────────────────────────────────┐││
-│                             │  │ 💡 AI Summary                       │││
-│                             │  │    llama-3.1-8b-instant (Groq)      │││
-│                             │  │                                     │││
-│                             │  │  "Based on the context provided..." │││
-│                             │  └─────────────────────────────────────┘││
-│                             │                                         ││
-│                             │  MATCHING CHUNKS                        ││
-│                             │  ┌─────────────────────────────────────┐││
-│                             │  │ 📄 document.pdf          92.3%      │││
-│                             │  │ ~/Documents/folder-name/...         │││
-│                             │  │ ─────────────────────────────────── │││
-│                             │  │ "Relevant extracted text from the   │││
-│                             │  │  document appears here..."          │││
-│                             │  └─────────────────────────────────────┘││
-│                             └─────────────────────────────────────────┘│
-└───────────────────────────────────────────────────────────────────────┘
-
-  ✓  Green tick = successfully indexed    ←  Collapse sidebar
-  →  Tab on left edge to reopen           ⋮  Filter by PDF or DOCX
+┌────────────────────────────────────────┐
+│          Electron Shell (UI)           │
+│  main.js → spawns Python sidecar      │
+│  preload.js → native folder picker    │
+└──────────────┬─────────────────────────┘
+               │ HTTP (localhost)
+┌──────────────▼─────────────────────────┐
+│       Flask Backend (app.py)           │
+│                                        │
+│  embedder.py  →  fastembed ONNX        │
+│  config.py    →  ~/.smartsearch/       │
+│  memory_helper.py → system stats       │
+│                                        │
+│  FAISS + BM25 hybrid search            │
+│  Groq API for LLM summaries            │
+└────────────────────────────────────────┘
 ```
 
 ---
 
-## Requirements
+## Prerequisites
 
-- Python 3.9+ (3.10+ recommended)
-- macOS or Linux
-- A free [Groq API key](https://console.groq.com)
+| Tool | Version | Install |
+|------|---------|---------|
+| Python | 3.9+ | [python.org](https://python.org) or `brew install python` |
+| Node.js | 18+ | [nodejs.org](https://nodejs.org) or `brew install node` |
+| Groq API key | — | [console.groq.com](https://console.groq.com) — free, no credit card |
+
+> **macOS only.** The Electron shell and DMG packaging target macOS. The Flask backend alone works on Linux/Windows.
 
 ---
 
-## Setup
+## Building from Source
 
 ### 1. Clone the repository
 
@@ -86,87 +66,175 @@ git clone https://github.com/your-username/smart-search.git
 cd smart-search
 ```
 
-### 2. Create and activate a virtual environment
+### 2. Set up the Python environment
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
-> **Note:** The first run will download the `all-MiniLM-L6-v2` embedding model (~90 MB) from HuggingFace. It is cached locally after the first download.
+> On first index the ONNX embedding model (~22 MB) downloads automatically to `~/.cache/huggingface/` and is cached for all future runs.
 
-### 4. Configure your API key
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-
-```env
-GROQ_API_KEY=your_groq_api_key_here
-```
-
-Get a free key at [console.groq.com](https://console.groq.com) — no credit card required. Includes 14,400 requests/day free.
-
-### 5. Add documents to scan
-
-Place PDF or DOCX files anywhere inside:
-
-| Folder | Scanned recursively |
-|--------|-------------------|
-| `~/Documents` | Yes |
-| `~/Downloads` | Yes |
-
-> Code files, `venv/`, `.git/`, `node_modules/`, and `__pycache__/` are automatically skipped.
-
-### 6. Run the app
+### 3. Build the Python binary with PyInstaller
 
 ```bash
 source venv/bin/activate
-python app.py
+pip install pyinstaller
+pyinstaller smartsearch.spec --noconfirm
 ```
 
-Open **http://localhost:5001** in your browser.
+This produces `dist/smartsearch` — a self-contained ~43 MB binary that includes Flask, FAISS, fastembed, and all dependencies.
+
+### 4. Install Electron dependencies
+
+```bash
+cd electron
+npm install
+```
+
+### 5. Build the DMG
+
+```bash
+npm run dist
+```
+
+The output is `electron/dist/Smart Search-1.0.0-arm64.dmg` (~137 MB).
 
 ---
 
-## Usage
+## Installing the App
 
-| Step | Action | What happens |
-|------|--------|-------------|
-| 1 | Click **Index Files** | Scans `~/Documents` + `~/Downloads`, extracts text, builds FAISS index |
-| 2 | Watch the progress bar | Updates per file → switches to "Encoding chunks…" at 100% |
-| 3 | Sidebar populates | Every indexed file appears with a green ✓ tick, grouped by folder |
-| 4 | Type a question | Hybrid search (FAISS + BM25) finds the most relevant chunks |
-| 5 | See results | AI summary at top, matching chunks below with file path + match % |
-| 6 | Click ← to hide sidebar | Sidebar collapses; a → tab remains to restore it |
+1. Open `electron/dist/Smart Search-1.0.0-arm64.dmg`
+2. Drag **Smart Search** into your Applications folder
+3. Launch it — it lives in your macOS menu bar (tray icon)
+4. On first launch, click the tray icon → **Settings**
+5. Paste your [Groq API key](https://console.groq.com) and add the folders you want to search
+6. Go back to the main window and click **Index Files**
+
+> **Gatekeeper warning:** Because the app is not notarized, macOS may block it on first open. Right-click the app → **Open** → **Open** to bypass this once.
+
+---
+
+## Development Mode (no DMG needed)
+
+Run the Flask backend and Electron shell separately:
+
+```bash
+# Terminal 1 — Python backend
+source venv/bin/activate
+python app.py
+# Starts on http://127.0.0.1:5001
+
+# Terminal 2 — Electron shell (points at the running backend)
+cd electron
+npm start
+```
+
+Electron detects the already-running backend and skips spawning its own Python process.
 
 ---
 
 ## Project Structure
 
 ```
-smart_search/
-├── app.py               # Flask backend — indexing, search, Groq API
-├── memory_helper.py     # System stats and memory utilities
-├── requirements.txt     # All Python dependencies with versions
-├── .env                 # Your API keys (not committed to git)
-├── .env.example         # Template — copy this to .env
-├── .gitignore           # Excludes venv/, faiss_index/, .env
+smart-search/
+├── app.py                  # Flask backend — indexing, search, Groq API, settings routes
+├── embedder.py             # ONNX text embeddings via fastembed (replaces torch)
+├── config.py               # Persistent config at ~/.smartsearch/config.json
+├── memory_helper.py        # System memory / psutil utilities
+├── smartsearch.spec        # PyInstaller build spec
+├── requirements.txt        # Python dependencies
+├── .gitignore
 ├── README.md
 ├── templates/
-│   └── index.html       # Full frontend — sidebar, search, results
-└── faiss_index/         # Auto-generated at runtime (not committed)
-    ├── index.faiss      # Binary vector index
-    └── metadata.pkl     # Document chunk metadata + file paths
+│   ├── index.html          # Main search UI (sidebar, search bar, results)
+│   └── settings.html       # Settings page (API key, folders, model)
+└── electron/
+    ├── main.js             # Electron main process — spawn Python, tray, window
+    ├── preload.js          # Context bridge — folder picker, isElectron flag
+    ├── package.json        # electron-builder config, DMG target
+    └── assets/
+        ├── icon.icns       # macOS app icon (all sizes)
+        ├── icon-512.png    # Source icon (512×512)
+        ├── tray-icon.png   # Menu bar tray icon (16×16)
+        └── dmg-bg.png      # DMG window background
 ```
+
+**Not committed (auto-generated or user-specific):**
+
+```
+venv/                       # Python virtual environment
+dist/                       # PyInstaller output
+build/                      # PyInstaller build cache
+electron/node_modules/      # Node dependencies
+electron/dist/              # DMG output
+faiss_index/                # Your personal document index
+~/.smartsearch/             # Your config + API key (stored outside the repo)
+```
+
+---
+
+## How It Works
+
+### Indexing
+
+```
+Folders you chose in Settings
+        │
+        ▼
+Filter PDF + DOCX  (skip venv/, .git/, node_modules/)
+        │
+        ▼
+Extract text  (PyPDF2 / python-docx)
+        │
+        ▼
+Chunk text  (256 words, 32-word overlap)
+        │
+        ▼
+Embed chunks  (all-MiniLM-L6-v2 ONNX, 384-dim vectors)
+        │
+        ▼
+Save FAISS index + BM25 index + metadata to disk
+```
+
+### Search
+
+```
+Your question
+        │
+        ▼
+Embed query  (same ONNX model, 384-dim)
+        │
+        ├── FAISS L2 search → top-k semantic matches
+        │
+        └── BM25 keyword search → top-k keyword matches
+                │
+                ▼
+        Reciprocal Rank Fusion → unified ranked list
+                │
+                ▼
+        Top chunks sent to Groq API (llama-3.1-8b-instant)
+                │
+                ▼
+        AI summary + source file paths returned to UI
+```
+
+---
+
+## Configuration
+
+All settings are stored in `~/.smartsearch/config.json` and managed through the in-app Settings page. Nothing is hardcoded.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `groq_api_key` | _(set in Settings)_ | Your Groq API key |
+| `groq_model` | `llama-3.1-8b-instant` | Groq model for AI summaries |
+| `scan_folders` | `~/Documents`, `~/Downloads` | Folders scanned for documents |
+| `max_files` | `100` | Cap on documents indexed per run |
+| `chunk_size` | `256` | Words per chunk |
+| `overlap` | `32` | Word overlap between adjacent chunks |
+| `port` | `5001` | Flask port (auto-reassigned on conflict) |
 
 ---
 
@@ -174,120 +242,48 @@ smart_search/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/` | Serves the main UI |
-| `POST` | `/index` | Triggers document indexing |
-| `GET` | `/progress` | Returns current indexing progress (polled by UI) |
-| `GET` | `/index-stats` | Returns doc count and FAISS index size in MB |
-| `GET` | `/documents` | Returns list of all indexed documents |
-| `POST` | `/search` | Performs semantic search + Groq LLM response |
+| `GET` | `/` | Main search UI |
+| `GET` | `/settings` | Settings page |
+| `POST` | `/settings/save` | Save config |
+| `POST` | `/settings/test-api-key` | Validate a Groq key |
+| `POST` | `/index` | Trigger document indexing |
+| `GET` | `/progress` | Indexing progress (polled by UI) |
+| `GET` | `/index-stats` | Doc count and index size |
+| `GET` | `/documents` | List indexed documents |
+| `POST` | `/search` | Hybrid search + Groq LLM response |
+| `GET` | `/status` | Backend health check |
 
 ---
 
 ## Dependencies
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `flask` | 3.1.3 | Web server |
-| `sentence-transformers` | 5.1.2 | Text embeddings (`all-MiniLM-L6-v2`) |
-| `faiss-cpu` | 1.13.0 | Vector similarity search |
-| `groq` | 1.0.0 | Groq LLM API (`llama-3.1-8b-instant`) |
-| `torch` | 2.8.0 | PyTorch backend for embeddings |
-| `PyPDF2` | 3.0.1 | PDF text extraction |
-| `python-docx` | 1.2.0 | DOCX text extraction |
-| `python-dotenv` | 1.2.1 | Load `.env` file |
-| `rank-bm25` | 0.2.2 | BM25 keyword search index |
-| `numpy` | 2.0.2 | Numerical operations |
-| `psutil` | 7.2.2 | System memory monitoring |
+### Python
 
-Full list in [`requirements.txt`](requirements.txt).
+| Package | Purpose |
+|---------|---------|
+| `flask` | Web server / API |
+| `fastembed` | ONNX text embeddings (no GPU, no PyTorch) |
+| `faiss-cpu` | Vector similarity search |
+| `groq` | Groq LLM API |
+| `PyPDF2` | PDF text extraction |
+| `python-docx` | DOCX text extraction |
+| `rank-bm25` | BM25 keyword index |
+| `numpy` | Numerical operations |
+| `psutil` | System memory monitoring |
+| `python-dotenv` | `.env` file loading |
 
----
+### Node / Electron
 
-## Configuration
-
-Edit these constants at the top of `app.py` to customise behaviour:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `SCAN_FOLDERS` | `~/Documents`, `~/Downloads` | Folders scanned for documents |
-| `FAISS_INDEX_PATH` | `./faiss_index` | Where the FAISS index is saved |
-| Max files | `100` | Cap on documents indexed per run |
-| `chunk_size` | `256` words | Size of each text chunk |
-| `overlap` | `32` words | Word overlap between adjacent chunks |
-| LLM model | `llama-3.1-8b-instant` | Groq model used for AI summaries |
+| Package | Purpose |
+|---------|---------|
+| `electron` | Desktop shell |
+| `electron-builder` | DMG packaging |
 
 ---
 
-## How It Works
+## Why fastembed instead of PyTorch?
 
-```
- ┌─────────────────────────────────────────────────────────────┐
- │                        INDEXING                             │
- │                                                             │
- │  ~/Documents + ~/Downloads                                  │
- │         │                                                   │
- │         ▼                                                   │
- │   Filter PDF + DOCX  (skip code/env/git)                   │
- │         │                                                   │
- │         ▼                                                   │
- │   Extract text  (PyPDF2 / python-docx)                     │
- │         │                                                   │
- │         ▼                                                   │
- │   Chunk text  (256 words, 32 overlap)                      │
- │         │                                                   │
- │         ▼                                                   │
- │   Embed chunks  (all-MiniLM-L6-v2, 384-dim vectors)        │
- │         │                                                   │
- │         ▼                                                   │
- │   Save FAISS index + metadata.pkl to disk                  │
- └─────────────────────────────────────────────────────────────┘
-
- ┌─────────────────────────────────────────────────────────────┐
- │                        SEARCH                               │
- │                                                             │
- │  User question: "What is my current job title?"            │
- │         │                                                   │
- │         ▼                                                   │
- │   Embed query  (same model, 384-dim vector)                │
- │         │                                                   │
- │         ▼                                                   │
- │   FAISS L2 search  → top-5 nearest chunks                  │
- │         │                                                   │
- │         ▼                                                   │
- │   Send chunks as context to Groq API                       │
- │   (llama-3.1-8b-instant)                                   │
- │         │                                                   │
- │         ▼                                                   │
- │   Return: AI summary + chunks with source paths            │
- └─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Environment Variables
-
-| Variable | Required | Where to get it |
-|----------|----------|----------------|
-| `GROQ_API_KEY` | **Yes** | [console.groq.com](https://console.groq.com) — free, no credit card |
-
----
-
-## Notes
-
-- The FAISS index is **rebuilt from scratch** each time you click Index Files
-- `faiss_index/` is excluded from git (see `.gitignore`) — each user builds their own
-- Python 3.9 works but **3.10+ is recommended** — Google and other libraries are dropping 3.9 support
-- On first run the embedding model downloads ~90 MB and is cached in `~/.cache/huggingface/`
-
----
-
-## Roadmap
-
-- [ ] Image search using CLIP embeddings
-- [ ] ChromaDB as an alternative to FAISS (persistent, easier metadata filtering)
-- [ ] Drag-and-drop file upload instead of scanning entire folders
-- [ ] Page number tracking in PDF chunks
-- [x] Hybrid search (semantic FAISS + keyword BM25 via Reciprocal Rank Fusion)
+The original version used `sentence-transformers` + PyTorch (~1.2 GB installed). This was replaced with [fastembed](https://github.com/qdrant/fastembed), which runs the same `all-MiniLM-L6-v2` model via ONNX Runtime — no GPU, no PyTorch, ~80 MB installed. The final DMG is 137 MB instead of ~1.5 GB.
 
 ---
 

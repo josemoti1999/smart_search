@@ -1,0 +1,47 @@
+{
+  "name": "smart-search",
+  "version": "1.0.0",
+  "description": "Local RAG document search — runs entirely on your Mac",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --dev",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --mac dmg"
+  },
+  "build": {
+    "appId": "com.josemoti.smartsearch",
+    "productName": "Smart Search",
+    "copyright": "Copyright © 2025 Jose Moti",
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "assets/icon.icns",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "title": "Smart Search",
+      "background": "assets/dmg-bg.png",
+      "window": { "width": 540, "height": 380 }
+    },
+    "extraResources": [
+      {
+        "from": "../dist/smartsearch",
+        "to": "smartsearch"
+      }
+    ],
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**"
+    ],
+    "asar": true
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  }
+}
