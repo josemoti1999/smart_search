@@ -3,7 +3,7 @@
 
   # Smart Search
 
-  > A local RAG (Retrieval-Augmented Generation) desktop app that semantically searches your PDF and DOCX files and generates AI-powered answers — packaged as a native macOS app with no cloud dependencies except the Groq API.
+  > A local RAG (Retrieval-Augmented Generation) desktop app that semantically searches your PDF and DOCX files and generates AI-powered answers — packaged as a native macOS app. Indexing and search run entirely on your machine — only the final AI summary is sent to Groq's cloud API.
 
   ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
   ![Electron](https://img.shields.io/badge/Electron-33-47848F)
@@ -22,7 +22,7 @@
 3. Builds a FAISS vector index (semantic) **and** a BM25 keyword index
 4. On each search, runs both indices and combines results via **Reciprocal Rank Fusion**
 5. Sends the top-ranked chunks to Groq's free LLM and returns an AI summary + source file paths
-6. Everything runs locally on your Mac — your documents never leave your machine
+6. All indexing and search happens locally on your Mac — only the top-matching text chunks are sent to Groq's cloud API to generate the AI summary
 
 ---
 
