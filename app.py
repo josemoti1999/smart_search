@@ -1,6 +1,8 @@
 # app.py
 # Main Flask application for the local RAG system.
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import shutil
 import atexit
 import time
@@ -17,8 +19,8 @@ import logging
 import sqlite3
 import numpy as np
 from pathlib import Path
-from transformers import AutoProcessor, GemmaForCausalLM, BitsAndBytesConfig
 from memory_helper import get_system_stats, print_system_stats, check_memory_pressure, cleanup_variables
+from groq import Groq
 # from langchain.vectorstores import FAISS
 # from langchain.embeddings import HuggingFaceEmbeddings
 # from langchain.docstore.document import Document
@@ -29,134 +31,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Directory for storing FAISS index
 FAISS_INDEX_PATH = os.path.join(os.path.dirname(__file__), 'faiss_index')
-DOCUMENTS_FOLDER = r"C:\Users\josea\OneDrive\Documents" 
-
-# Directory for storing models
-MODELS_CACHE_PATH = os.path.join(os.path.dirname(__file__), 'models_cache')
-GEMMA_CACHE_PATH = os.path.join(MODELS_CACHE_PATH, 'gemma-2b-it')
-
-# Create models cache directory if it doesn't exist
-os.makedirs(MODELS_CACHE_PATH, exist_ok=True)
-
-def load_model_once():
-    """Load the model once and cache it in memory for subsequent uses."""
-    global _cached_model, _cached_processor, _model_device
-    
-    if _cached_model is not None:
-        print("✅ Using cached model from previous load")
-        return _cached_model, _cached_processor, _model_device
-    
-    print("🚀 Loading model for the first time - will be cached for future use...")
-    
-    # Determine device configuration
-    if torch.cuda.is_available():
-        total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        if total_memory <= 4.0:
-            device = "cuda:0"
-            use_streaming = True
-        else:
-            device = "cuda:0" 
-            use_streaming = False
-    else:
-        print("❌ No GPU available")
-        return None, None, None
-    
-    # Load processor once and cache it
-    _cached_processor = AutoProcessor.from_pretrained(
-        GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
-        local_files_only=os.path.exists(GEMMA_CACHE_PATH)
-    )
-    
-    # Configure quantization
-    quantization_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16,
-        llm_int8_enable_fp32_cpu_offload=True,
-    )
-    
-    # Load model once and cache it
-    if use_streaming:
-        offload_dir = os.path.join(os.path.dirname(__file__), 'model_streaming')
-        os.makedirs(offload_dir, exist_ok=True)
-        
-        _cached_model = GemmaForCausalLM.from_pretrained(
-            GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
-            torch_dtype=torch.float16,
-            quantization_config=quantization_config,
-            device_map="auto",
-            offload_buffers=True,
-            offload_folder=offload_dir,
-            max_memory={0: f"{total_memory * 0.9:.1f}GB"},
-            low_cpu_mem_usage=True,
-            offload_state_dict=True,
-            local_files_only=os.path.exists(GEMMA_CACHE_PATH),
-            cache_dir=MODELS_CACHE_PATH
-        ).eval()
-    else:
-        _cached_model = GemmaForCausalLM.from_pretrained(
-            GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
-            torch_dtype=torch.float16,
-            quantization_config=quantization_config,
-            device_map="auto",
-            max_memory={0: f"{total_memory * 0.9:.1f}GB"},
-            low_cpu_mem_usage=True,
-            local_files_only=os.path.exists(GEMMA_CACHE_PATH),
-            cache_dir=MODELS_CACHE_PATH
-        ).eval()
-    
-    _model_device = device
-    print("✅ Model loaded and cached successfully - subsequent searches will be much faster!")
-    
-    # Save to cache if needed
-    if not os.path.exists(GEMMA_CACHE_PATH):
-        print("💾 Saving model to local cache...")
-        _cached_model.save_pretrained(GEMMA_CACHE_PATH)
-        _cached_processor.save_pretrained(GEMMA_CACHE_PATH)
-    
-    return _cached_model, _cached_processor, _model_device
-
-def load_or_download_gemma():
-    """Load Gemma model from local cache or download if not available."""
-    try:
-        logging.info("Loading Gemma model...")
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        # Check if model is already cached
-        if os.path.exists(GEMMA_CACHE_PATH):
-            logging.info("Loading Gemma model from local cache...")
-            model = GemmaForCausalLM.from_pretrained(
-                GEMMA_CACHE_PATH,
-                device_map=device,
-                torch_dtype=torch.bfloat16,
-                local_files_only=True
-            ).eval()
-            processor = AutoProcessor.from_pretrained(
-                GEMMA_CACHE_PATH,
-                local_files_only=True
-            )
-        else:
-            logging.info("Downloading Gemma model for the first time...")
-            # Download and save the model
-            model = GemmaForCausalLM.from_pretrained(
-                "google/gemma-2b-it",
-                device_map=device,
-                torch_dtype=torch.bfloat16
-            ).eval()
-            print("Model loaded")
-            processor = AutoProcessor.from_pretrained("google/gemma-2b-it")
-            
-            # Save model and processor to local cache
-            logging.info("Saving Gemma model to local cache...")
-            model.save_pretrained(GEMMA_CACHE_PATH)
-            processor.save_pretrained(GEMMA_CACHE_PATH)
-            
-        logging.info(f"Gemma model loaded successfully on device: {device}")
-        return model, processor
-    except Exception as e:
-        logging.error(f"Failed to load Gemma model: {e}")
-        return None, None
+SCAN_FOLDERS = [
+    os.path.expanduser("~/Documents"),
+    os.path.expanduser("~/Downloads"),
+]
 
 # --- Model Loading ---
 # Load a pre-trained sentence-transformer model. 'all-MiniLM-L6-v2' is a good starting point
@@ -171,19 +49,14 @@ except Exception as e:
     logging.error(f"Failed to load the model: {e}")
     model = None
 
-# Don't initialize Gemma model at startup
-gemma_model, gemma_processor = None, None
-
-# Global model cache for persistent model loading
-_cached_model = None
-_cached_processor = None
-_model_device = None
-
 # --- Global In-Memory Storage ---
 # For simplicity, we'll store the embeddings and corresponding text chunks in memory.
 # For a larger-scale application, you would use a vector database like FAISS or Chroma.
 document_chunks = []
 chunk_embeddings = None
+
+# Global indexing progress
+indexing_progress = {"current": 0, "total": 0, "status": "idle"}
 
 # --- Flask App Initialization ---
 app = Flask(__name__)
@@ -268,142 +141,126 @@ def is_env_directory(path):
 
 def index_documents():
     """
-    Scans the documents folder, reads files, chunks text,
+    Scans the documents folder, reads PDF and DOCX files, chunks text,
     and generates vector embeddings for each chunk using FAISS.
+    Progress is updated per file so the UI bar moves smoothly.
     """
+    global indexing_progress
+
     if model is None:
         logging.error("Model not available, cannot generate embeddings.")
         return 0
 
-    # Clean up any existing index and storage
     logging.info("Cleaning up existing index and storage...")
     cleanup_storage()
-    
-    logging.info(f"Starting document indexing from '{DOCUMENTS_FOLDER}'...")
-    
-    # Collect all files first, excluding environment directories
+
+    logging.info(f"Starting document indexing from: {SCAN_FOLDERS}")
+
+    # Collect only PDF and DOCX files from all scan folders, skip code/env directories
     all_files = []
-    for root, dirs, files in os.walk(DOCUMENTS_FOLDER):
-        # Skip environment directories
-        if is_env_directory(root):
-            dirs.clear()  # Skip subdirectories
+    for scan_root in SCAN_FOLDERS:
+        if not os.path.exists(scan_root):
             continue
-            
-        # Remove environment directories from dirs list to prevent walking into them
-        dirs[:] = [d for d in dirs if not is_env_directory(os.path.join(root, d))]
-        
-        for filename in files:
-            if filename.endswith(('.txt', '.pdf', '.docx')):
-                file_path = os.path.join(root, filename)
-                # Extra check to ensure we're not in an environment directory
-                if not is_env_directory(file_path):
-                    rel_path = os.path.relpath(file_path, DOCUMENTS_FOLDER)
-                    all_files.append((file_path, rel_path))
-                    logging.info(f"Found document: {rel_path}")
-    
+        for root, dirs, files in os.walk(scan_root):
+            if is_env_directory(root):
+                dirs.clear()
+                continue
+            dirs[:] = [d for d in dirs if not is_env_directory(os.path.join(root, d))]
+            for filename in files:
+                if filename.lower().endswith(('.pdf', '.docx')):
+                    file_path = os.path.join(root, filename)
+                    if not is_env_directory(file_path):
+                        rel_path = os.path.relpath(file_path, os.path.expanduser("~"))
+                        all_files.append((file_path, rel_path))
+                        logging.info(f"Found document: {rel_path}")
+
+    # Cap at 100 documents
+    all_files = all_files[:100]
+    total = len(all_files)
+
+    indexing_progress["total"] = total
+    indexing_progress["current"] = 0
+    indexing_progress["status"] = "indexing"
+
     if not all_files:
-        logging.warning("No supported files found.")
+        logging.warning("No supported files found (PDF or DOCX).")
+        indexing_progress["status"] = "completed"
         return 0
 
-    supported_files = 0
-    chunk_count = 0
+    all_texts = []
     all_metadata = []
-    
+    supported_files = 0
+
+    # Phase 1: Extract text from each file, update progress per file
+    for i, (file_path, rel_path) in enumerate(all_files):
+        try:
+            content = ""
+            if file_path.lower().endswith('.pdf'):
+                content = read_pdf_file(file_path)
+            elif file_path.lower().endswith('.docx'):
+                content = read_docx_file(file_path)
+
+            content = clean_text(content)
+            if content:
+                chunks = chunk_text(content)
+                for chunk in chunks:
+                    chunk = clean_text(chunk)
+                    if chunk:
+                        all_texts.append(chunk)
+                        all_metadata.append({
+                            'source': rel_path,
+                            'full_path': file_path,
+                            'text': chunk
+                        })
+                supported_files += 1
+                logging.info(f"Processed '{rel_path}' — {len(chunks)} chunks.")
+            else:
+                logging.warning(f"No content extracted from {rel_path}")
+        except Exception as e:
+            logging.error(f"Error processing {rel_path}: {e}")
+
+        # Update progress after each file so the bar moves smoothly
+        indexing_progress["current"] = i + 1
+
+    if not all_texts:
+        logging.warning("No text chunks were generated.")
+        indexing_progress["current"] = total
+        indexing_progress["status"] = "completed"
+        return 0
+
+    # Ensure progress bar shows 100% before encoding starts
+    indexing_progress["current"] = total
+    indexing_progress["status"] = "encoding"
+
     try:
-        # Process files in batches
-        file_batch_size = 100
-        
-        # Initialize FAISS index
-        # We'll determine the dimension from the first embedding
-        index = None
-        
-        for i in range(0, len(all_files), file_batch_size):
-            batch_files = all_files[i:i + file_batch_size]
-            batch_documents = []
-            batch_texts = []  # Store texts separately
-            batch_metadata = []  # Store metadata separately
-            
-            # Process each file in the current batch
-            for file_path, rel_path in batch_files:
-                try:
-                    content = ""
-                    if file_path.endswith('.txt'):
-                        content = read_text_file(file_path)
-                    elif file_path.endswith('.pdf'):
-                        content = read_pdf_file(file_path)
-                    elif file_path.endswith('.docx'):
-                        content = read_docx_file(file_path)
-                    
-                    if content := clean_text(content):
-                        chunks = chunk_text(content)
-                        for chunk in chunks:
-                            if chunk := clean_text(chunk):
-                                batch_texts.append(str(chunk))  # Ensure text is string
-                                batch_metadata.append({
-                                    'source': rel_path,
-                                    'text': str(chunk)  # Store the text content with metadata
-                                })
-                        
-                        supported_files += 1
-                        logging.info(f"Processed '{rel_path}'. Found {len(chunks)} chunks.")
-                except Exception as e:
-                    logging.error(f"Error processing file {rel_path}: {str(e)}")
-                    continue
-            
-            if not batch_texts:
-                continue
-                
-            try:
-                # Generate embeddings using sentence-transformers
-                embeddings = model.encode(
-                    batch_texts,
-                    convert_to_tensor=True,
-                    show_progress_bar=True,
-                    batch_size=32  # Process in smaller sub-batches
-                )
-                embeddings_np = embeddings.cpu().numpy()
-                
-                # Initialize index with first batch if not done yet
-                if index is None:
-                    dimension = embeddings_np.shape[1]
-                    index = faiss.IndexFlatL2(dimension)
-                    if torch.cuda.is_available():
-                        res = faiss.StandardGpuResources()
-                        index = faiss.index_cpu_to_gpu(res, 0, index)
-                
-                # Add to index
-                index.add(embeddings_np)
-                all_metadata.extend(batch_metadata)
-                chunk_count += len(batch_texts)
-                
-                logging.info(f"Indexed batch of {len(batch_texts)} chunks. Total chunks: {chunk_count}")
-            except Exception as e:
-                logging.error(f"Error processing batch: {str(e)}")
-                continue
-        
-        if chunk_count == 0:
-            logging.warning("No text chunks were generated. Check your documents folder or file contents.")
-            return 0
-        
-        # Save the index and metadata
+        # Phase 2: Batch-encode all chunks at once (efficient)
+        logging.info(f"Encoding {len(all_texts)} chunks from {supported_files} files...")
+        embeddings = model.encode(
+            all_texts,
+            convert_to_tensor=True,
+            show_progress_bar=True,
+            batch_size=32
+        )
+        embeddings_np = embeddings.cpu().numpy()
+
+        # Build FAISS index
+        dimension = embeddings_np.shape[1]
+        index = faiss.IndexFlatL2(dimension)
+        index.add(embeddings_np)
+
+        # Save index and metadata
         os.makedirs(FAISS_INDEX_PATH, exist_ok=True)
-        
-        # Convert GPU index back to CPU for saving if necessary
-        if torch.cuda.is_available():
-            index = faiss.index_gpu_to_cpu(index)
-            
         faiss.write_index(index, os.path.join(FAISS_INDEX_PATH, 'index.faiss'))
-        
-        # Save metadata
-        import pickle
         with open(os.path.join(FAISS_INDEX_PATH, 'metadata.pkl'), 'wb') as f:
             pickle.dump(all_metadata, f)
-        
-        logging.info(f"Successfully indexed {chunk_count} chunks from {supported_files} files.")
-        return chunk_count
-        
+
+        logging.info(f"Successfully indexed {len(all_texts)} chunks from {supported_files} files.")
+        indexing_progress["status"] = "completed"
+        return len(all_texts)
+
     except Exception as e:
-        logging.error(f"Error creating FAISS index: {str(e)}")
+        logging.error(f"Error creating FAISS index: {e}")
+        indexing_progress["status"] = "error"
         return 0
     
 
@@ -484,492 +341,81 @@ def cleanup_storage():
 # def cleanup():
 #     cleanup_storage()
 
-def generate_gemma_response(context, query):
+def generate_response(context, query):
     """
-    Generate a response using the Gemma model based on context and query.
-    Uses dynamic loading and memory optimization with system monitoring.
+    Generate a response using Groq API (llama-3.1-8b-instant) based on context and query.
     """
     try:
-        print("\n=== Starting Gemma Response Generation ===")
-        start_time = time.time()
-        initial_stats = print_system_stats("Initial")
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            return "Error: GROQ_API_KEY environment variable not set. Get a free key at console.groq.com"
 
-        # Step 1: Aggressive Memory Cleanup
-        print("\nStep 1: Initial Memory Cleanup")
-        cleanup_start = time.time()
-        
-        if torch.cuda.is_available():
-            # Print initial GPU state
-            initial_allocated = torch.cuda.memory_allocated(0) / (1024**3)
-            print(f"Initial GPU Memory Allocated: {initial_allocated:.2f}GB")
-            
-            # Clear CUDA cache
-            torch.cuda.empty_cache()
-            
-            # Force garbage collection
-            gc.collect()
-            
-            # Reset peak memory stats
-            torch.cuda.reset_peak_memory_stats()
-            
-            # Clear all existing tensors
-            for obj in gc.get_objects():
-                try:
-                    if torch.is_tensor(obj):
-                        del obj
-                except:
-                    pass
-            
-            # Final cache clear
-            torch.cuda.empty_cache()
-            gc.collect()  # Additional cleanup
-            
-            # Check memory after cleanup
-            after_cleanup = torch.cuda.memory_allocated(0) / (1024**3)
-            print(f"After Aggressive Cleanup GPU Memory: {after_cleanup:.2f}GB")
-            
-            gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            print(f"Total Available GPU Memory: {gpu_memory:.2f}GB")
-            
-        print(f"Step 1 Time: {time.time() - cleanup_start:.2f} seconds")
-        cleanup_stats = print_system_stats("After Cleanup")
-
-        # Step 2: Load processor and prepare messages
-        print("\nStep 2: Loading Processor and Preparing Messages")
-        step2_start = time.time()
-        
-        processor = AutoProcessor.from_pretrained(
-            GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
-            local_files_only=os.path.exists(GEMMA_CACHE_PATH)
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant. Answer questions based only on the provided context. Be concise and clear."
+                },
+                {
+                    "role": "user",
+                    "content": f"Context:\n{context}\n\nQuestion: {query}"
+                }
+            ],
+            max_tokens=512,
+            temperature=0.3
         )
-        print(f"Processor loaded in {time.time() - step2_start:.2f} seconds")
-        
-        # Gemma 2B uses a simpler message format without nested content structure
-        messages = [
-            {
-                "role": "user",
-                "content": f"Context: {context}\n\nQuestion: {query}\n\nProvide a clear and concise answer based on the given context."
-            }
-        ]
-        print(f"Messages prepared. Total step time: {time.time() - step2_start:.2f} seconds")
-        step2_stats = print_system_stats("After Processor Load")
-
-        # Step 3: Process input template
-        print("\nStep 3: Processing Input Template")
-        step3_start = time.time()
-        
-        # For Gemma 2B, use the tokenizer directly with proper formatting
-        try:
-            inputs = processor.apply_chat_template(
-                messages,
-                add_generation_prompt=True,
-                tokenize=True,
-                return_dict=True,
-                return_tensors="pt"
-            )
-        except Exception as template_error:
-            print(f"Chat template failed, using manual formatting: {template_error}")
-            # Fallback to manual formatting for Gemma 2B
-            formatted_text = f"<bos><start_of_turn>user\nContext: {context}\n\nQuestion: {query}\n\nProvide a clear and concise answer based on the given context.<end_of_turn>\n<start_of_turn>model\n"
-            inputs = processor(
-                formatted_text,
-                return_tensors="pt",
-                truncation=True,
-                max_length=2048
-            )
-        
-        input_len = inputs["input_ids"].shape[-1]
-        print(f"Input sequence length: {input_len} tokens")
-        print(f"Input processing time: {time.time() - step3_start:.2f} seconds")
-        step3_stats = print_system_stats("After Input Processing")
-        
-        # Clean up message variables
-        cleanup_variables(messages)
-        
-        # Step 4: Configure model loading based on available memory
-        print("\nStep 4: Memory Configuration for Model Loading")
-        step4_start = time.time()
-        
-        # Check system memory pressure
-        memory_pressure = check_memory_pressure()
-        
-        if memory_pressure:
-            print(f"⚠️ System under memory pressure - using conservative settings")
-        
-        # Check actual available GPU memory
-        if torch.cuda.is_available():
-            total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            allocated_memory = torch.cuda.memory_allocated(0) / (1024**3)
-            free_memory = total_memory - allocated_memory
-            
-            print(f"GPU Memory Analysis:")
-            print(f"Total GPU Memory: {total_memory:.2f}GB")
-            print(f"Currently Allocated: {allocated_memory:.2f}GB")
-            print(f"Available for Model: {free_memory:.2f}GB")
-            
-            # GPU-only strategy - no CPU fallback to prevent RAM crashes
-            if total_memory <= 4.0:  # For GPUs with 4GB or less
-                print(f"🧠 GPU has {total_memory:.1f}GB - using aggressive 4-bit quantization")
-                print("� Using maximum compression for limited GPU memory")
-                device = "cuda:0"
-                torch_dtype = torch.float16
-                use_streaming = True
-                use_quantization = True
-            elif total_memory <= 8.0:  # For GPUs with 8GB or less
-                print(f"🧠 GPU has {total_memory:.1f}GB - using layer-by-layer streaming")
-                print("🔄 This allows using GPU with minimal memory footprint")
-                device = "cuda:0"
-                torch_dtype = torch.float16
-                use_streaming = True
-                use_quantization = True
-            else:
-                print(f"💪 GPU has {total_memory:.1f}GB - using standard loading")
-                device = "cuda:0"
-                torch_dtype = torch.float16
-                use_streaming = False
-                use_quantization = True
-        else:
-            print("❌ No GPU available - exiting to prevent RAM crash")
-            print("💡 This application requires a CUDA-capable GPU")
-            return "Error: No GPU available. This application requires CUDA support to prevent system memory overload."
-            
-        print(f"Selected device: {device}")
-        print(f"Using quantization: {use_quantization}")
-        print(f"Using layer streaming: {use_streaming}")
-        print(f"Memory configuration time: {time.time() - step4_start:.2f} seconds")
-        step4_stats = print_system_stats("After Memory Config")
-            
-        # Step 5: Load model - GPU ONLY to prevent RAM crashes
-        print("\nStep 5: Loading Model (GPU Only)")
-        step5_start = time.time()
-        
-        print("Starting GPU-only model load...")
-        
-        # CPU loading disabled to prevent RAM crashes
-        # if device == "cpu":
-        #     print("Loading Gemma model on CPU")
-        #     
-        #     # Monitor memory during CPU loading
-        #     pre_load_stats = get_system_stats()
-        #     
-        #     try:
-        #         model = Gemma3nForConditionalGeneration.from_pretrained(
-        #             GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-3n-e2b-it",
-        #             torch_dtype=torch_dtype,
-        #             device_map="cpu",
-        #             low_cpu_mem_usage=True,
-        #             local_files_only=os.path.exists(GEMMA_CACHE_PATH)
-        #         ).eval()
-        #         
-        #         # Check memory after loading
-        #         post_load_stats = get_system_stats()
-        #         memory_used = post_load_stats['ram_used_gb'] - pre_load_stats['ram_used_gb']
-        #         
-        #         print(f"✅ Model loaded successfully on CPU")
-        #         print(f"📊 Memory used for model: {memory_used:.2f}GB")
-        #             
-        #     except Exception as e:
-        #         print(f"❌ CPU model loading failed: {e}")
-        #         return f"Error loading model on CPU: {str(e)}"
-        
-        if device == "cuda:0" and use_streaming:
-            print("🧠 Loading Gemma model with layer-by-layer streaming for limited GPU")
-            
-            # Set up offload directory for layer streaming
-            offload_dir = os.path.join(os.path.dirname(__file__), 'model_streaming')
-            os.makedirs(offload_dir, exist_ok=True)
-            
-            # Calculate memory budget based on available RAM and GPU
-            available_ram = step4_stats['ram_available_gb']
-            gpu_memory_budget = min(total_memory * 0.9, available_ram * 0.9)  # Conservative approach
-            
-            print(f"Available System RAM: {available_ram:.2f}GB")
-            print(f"GPU Memory Budget: {gpu_memory_budget:.2f}GB")
-            
-            # Configure quantization for memory efficiency
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.float16,
-                llm_int8_enable_fp32_cpu_offload=True,
-            )
-            
-            # First attempt: Try with GPU + disk offloading
-            try:
-                print("🚀 Attempting GPU loading with conservative memory limits...")
-                model = GemmaForCausalLM.from_pretrained(
-                    GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
-                    torch_dtype=torch_dtype,
-                    quantization_config=quantization_config,
-                    device_map="auto",
-                    offload_buffers=True,
-                    offload_folder=offload_dir,
-                    max_memory={0: f"{gpu_memory_budget*3:.1f}GB"},
-                    low_cpu_mem_usage=True,
-                    offload_state_dict=True,
-                    local_files_only=os.path.exists(GEMMA_CACHE_PATH),
-                    cache_dir=MODELS_CACHE_PATH  # Force use of our cache directory
-                ).eval()
-                print("✅ Model loaded successfully with GPU + disk offloading!")
-                
-                # Save to local cache if downloaded fresh
-                if not os.path.exists(GEMMA_CACHE_PATH):
-                    print("💾 Saving model to local cache for future use...")
-                    try:
-                        model.save_pretrained(GEMMA_CACHE_PATH)
-                        processor.save_pretrained(GEMMA_CACHE_PATH)
-                        print("✅ Model cached successfully!")
-                    except Exception as save_error:
-                        print(f"⚠️ Failed to save to local cache: {save_error}")
-                
-            except Exception as gpu_error:
-                print(f"❌ GPU loading failed: {str(gpu_error)}")
-                print("� CPU fallback disabled to prevent RAM crashes")
-                print("💡 Try closing other applications to free GPU memory")
-                
-                # Clean up before exiting
-                cleanup_variables(quantization_config)
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                
-                return f"Error: GPU model loading failed and CPU fallback disabled to prevent RAM overload. GPU Error: {str(gpu_error)}"
-            
-        else:
-            print("Loading Gemma model on GPU with 4-bit quantization")
-            # Configure quantization for GPU
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.float16,
-                llm_int8_enable_fp32_cpu_offload=False,  # Disabled to prevent CPU fallback
-            )
-            
-            try:
-                model = GemmaForCausalLM.from_pretrained(
-                    GEMMA_CACHE_PATH if os.path.exists(GEMMA_CACHE_PATH) else "google/gemma-2b-it",
-                    torch_dtype=torch_dtype,
-                    quantization_config=quantization_config,
-                    device_map="auto",
-                    max_memory={0: f"{total_memory * 0.9:.1f}GB"},  # Use 90% of GPU memory
-                    low_cpu_mem_usage=True,
-                    local_files_only=os.path.exists(GEMMA_CACHE_PATH),
-                    cache_dir=MODELS_CACHE_PATH  # Force use of our cache directory
-                ).eval()
-                print("✅ Model loaded successfully on GPU with 4-bit quantization")
-                
-                # Save to local cache if downloaded fresh
-                if not os.path.exists(GEMMA_CACHE_PATH):
-                    print("💾 Saving model to local cache for future use...")
-                    try:
-                        model.save_pretrained(GEMMA_CACHE_PATH)
-                        processor.save_pretrained(GEMMA_CACHE_PATH)
-                        print("✅ Model cached successfully!")
-                    except Exception as save_error:
-                        print(f"⚠️ Failed to save to local cache: {save_error}")
-                
-            except Exception as gpu_error:
-                print(f"❌ GPU loading failed: {str(gpu_error)}")
-                print("🚫 CPU fallback disabled to prevent RAM crashes")
-                
-                # Clean up before exiting
-                cleanup_variables(quantization_config)
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                
-                return f"Error: GPU model loading failed and CPU fallback disabled. GPU Error: {str(gpu_error)}"
-        
-        # Clean up configuration variables
-        if 'quantization_config' in locals():
-            cleanup_variables(quantization_config)
-        
-        if torch.cuda.is_available():
-            current_memory = torch.cuda.memory_allocated(0) / (1024**3)
-            print(f"GPU Memory after model load: {current_memory:.2f}GB")
-            
-        print(f"Model loading time: {time.time() - step5_start:.2f} seconds")
-        step5_stats = print_system_stats("After Model Load")
-
-        # Step 6: Move inputs to device
-        print("\nStep 6: Moving Inputs to Device")
-        step6_start = time.time()
-        
-        inputs = inputs.to(device)
-        print(f"Inputs moved to {device}")
-            
-        if torch.cuda.is_available():
-            current_memory = torch.cuda.memory_allocated(0) / (1024**3)
-            print(f"GPU Memory after input move: {current_memory:.2f}GB")
-        
-        print(f"Input movement time: {time.time() - step6_start:.2f} seconds")
-        step6_stats = print_system_stats("After Input Move")
-
-        # Step 7: Generate response
-        print("\nStep 7: Generating Response")
-        step7_start = time.time()
-        
-        print("Starting generation...")
-        if use_streaming and device != "cpu":
-            print("🧠 Using layer streaming mode - layers will be loaded on-demand")
-        elif device == "cpu":
-            print("🖥️ Using CPU mode")
-            
-        # Monitor system before generation
-        pre_gen_stats = print_system_stats("Pre-Generation")
-        
-        with torch.inference_mode():
-            if torch.cuda.is_available():
-                pre_gen_memory = torch.cuda.memory_allocated(0) / (1024**3)
-                print(f"GPU Memory before generation: {pre_gen_memory:.2f}GB")
-
-            # declare max tokens
-            max_tokens=200
-            
-            try:
-                # For Gemma models, handle tokenizer access properly
-                if hasattr(processor, 'pad_token_id'):
-                    pad_token_id = processor.pad_token_id
-                    eos_token_id = processor.eos_token_id
-                else:
-                    # Fallback for AutoProcessor
-                    pad_token_id = getattr(processor, 'pad_token_id', None)
-                    eos_token_id = getattr(processor, 'eos_token_id', None)
-                
-                # Use simpler generation parameters that work with Gemma
-                generation = model.generate(
-                    **inputs,
-                    max_new_tokens=max_tokens,
-                    do_sample=True,
-                    temperature=0.7,
-                    pad_token_id=pad_token_id,
-                    eos_token_id=eos_token_id,
-                    use_cache=True
-                )
-                
-                # Ensure generation tensor is materialized and moved to CPU
-                if hasattr(generation, 'is_meta') and generation.is_meta:
-                    print("Warning: Generation tensor is meta, attempting to materialize...")
-                    generation = generation.detach()
-                
-                # Move to CPU safely and clean up GPU memory immediately
-                if generation.device != torch.device('cpu'):
-                    generation = generation.cpu()
-                
-                # Extract only the new tokens (skip the input)
-                generation = generation[0][input_len:]
-                
-            except Exception as gen_error:
-                print(f"❌ Generation failed: {gen_error}")
-                cleanup_variables(model, processor, inputs)
-                return f"Error during text generation: {str(gen_error)}"
-            
-            # Immediate cleanup of GPU tensors
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                post_gen_memory = torch.cuda.memory_allocated(0) / (1024**3)
-                print(f"GPU Memory after generation: {post_gen_memory:.2f}GB")
-                if use_streaming and device != "cpu":
-                    print(f"🎯 Peak GPU usage with streaming: {post_gen_memory:.2f}GB")
-        
-        print(f"Generation time: {time.time() - step7_start:.2f} seconds")
-        post_gen_stats = print_system_stats("Post-Generation")
-
-        # Step 8: Decode and comprehensive cleanup
-        print("\nStep 8: Decoding and Comprehensive Cleanup")
-        step8_start = time.time()
-        
-        try:
-            print("Decoding response...")
-            response = processor.decode(generation, skip_special_tokens=True)
-                
-            # Clean up generation tensor immediately
-            cleanup_variables(generation)
-            
-        except Exception as decode_error:
-            print(f"❌ Decoding failed: {decode_error}")
-            cleanup_variables(generation, model, processor, inputs)
-            return f"Error during response decoding: {str(decode_error)}"
-        
-        print("Performing comprehensive memory cleanup...")
-        pre_cleanup_stats = print_system_stats("Pre-Cleanup")
-        
-        if torch.cuda.is_available():
-            pre_cleanup_memory = torch.cuda.memory_allocated(0) / (1024**3)
-            print(f"GPU Memory before cleanup: {pre_cleanup_memory:.2f}GB")
-        
-        # Comprehensive cleanup
-        cleanup_variables(model, processor, inputs)
-        
-        # Additional cleanup for streaming artifacts
-        if use_streaming:
-            offload_dir = os.path.join(os.path.dirname(__file__), 'model_streaming')
-            if os.path.exists(offload_dir):
-                try:
-                    shutil.rmtree(offload_dir)
-                    print("🗑️ Cleaned up streaming cache directory")
-                except:
-                    pass  # Non-critical if cleanup fails
-        
-        # Final memory cleanup
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.reset_peak_memory_stats()
-            post_cleanup_memory = torch.cuda.memory_allocated(0) / (1024**3)
-            print(f"GPU Memory after cleanup: {post_cleanup_memory:.2f}GB")
-        
-        print(f"Decode and cleanup time: {time.time() - step8_start:.2f} seconds")
-        final_stats = print_system_stats("Final")
-        
-        # Summary statistics
-        total_time = time.time() - start_time
-        print(f"\n🏁 Processing Summary:")
-        print(f"   Total Time: {total_time:.2f} seconds")
-        print(f"   RAM Change: {final_stats['ram_used_gb'] - initial_stats['ram_used_gb']:+.2f}GB")
-        print(f"   Peak RAM Usage: {max(step5_stats['ram_percent'], post_gen_stats['ram_percent']):.1f}%")
-        print(f"   Final RAM Usage: {final_stats['ram_percent']:.1f}%")
-        if device == "cpu":
-            print(f"   CPU Processing: Successful without GPU acceleration")
-        else:
-            print(f"   GPU Processing: {'Streaming' if use_streaming else 'Standard'} mode")
-            
-        return response.strip()
-        
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"❌ Error in generate_answer: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        # Emergency cleanup
-        print("\n🚨 Emergency cleanup procedure activated...")
-        if 'model' in locals():
-            cleanup_variables(model)
-        if 'processor' in locals():
-            cleanup_variables(processor)
-        if 'inputs' in locals():
-            cleanup_variables(inputs)
-        if 'generation' in locals():
-            cleanup_variables(generation)
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()  # Force garbage collection
-        
-        # Print final system state for debugging
-        error_stats = print_system_stats("After Error")
-        
-        logging.error(f"Error generating Gemma response: {e}")
+        logging.error(f"Error generating Groq response: {e}")
         return f"Error generating response: {str(e)}"
 
-
-# --- Flask Routes ---
 
 @app.route('/')
 def home():
     """Renders the main page of the web application."""
     return render_template('index.html')
+
+@app.route('/progress')
+def get_progress():
+    return jsonify(indexing_progress)
+
+@app.route('/documents')
+def get_indexed_documents():
+    """Returns list of unique documents currently in the FAISS index."""
+    meta_path = os.path.join(FAISS_INDEX_PATH, 'metadata.pkl')
+    if not os.path.exists(meta_path):
+        return jsonify({'documents': []})
+    with open(meta_path, 'rb') as f:
+        metadata = pickle.load(f)
+    seen = {}
+    for m in metadata:
+        source = m['source']
+        if source not in seen:
+            seen[source] = {
+                'source': source,
+                'full_path': m.get('full_path', source),
+                'filename': os.path.basename(source),
+                'folder': os.path.dirname(source) or '/',
+                'type': 'pdf' if source.lower().endswith('.pdf') else 'docx'
+            }
+    return jsonify({'documents': list(seen.values())})
+
+@app.route('/index-stats')
+def get_index_stats():
+    """Returns how many documents are indexed and FAISS index size in MB."""
+    stats = {"doc_count": 0, "chunk_count": 0, "size_mb": 0.0, "indexed": False}
+    meta_path = os.path.join(FAISS_INDEX_PATH, 'metadata.pkl')
+    index_path = os.path.join(FAISS_INDEX_PATH, 'index.faiss')
+    if os.path.exists(meta_path) and os.path.exists(index_path):
+        stats["indexed"] = True
+        with open(meta_path, 'rb') as f:
+            metadata = pickle.load(f)
+        stats["doc_count"] = len(set(m['source'] for m in metadata))
+        stats["chunk_count"] = len(metadata)
+        stats["size_mb"] = round(os.path.getsize(index_path) / (1024 * 1024), 2)
+    return jsonify(stats)
 
 @app.route('/index', methods=['POST'])
 def handle_index():
@@ -1097,6 +543,7 @@ def search_endpoint():
                     results.append({
                         'text': meta['text'],
                         'source': meta['source'],
+                        'full_path': meta.get('full_path', meta['source']),
                         'score': float(1.0 / (1.0 + D[0][list(I[0]).index(idx)]))
                     })
         
@@ -1119,10 +566,10 @@ def search_endpoint():
         
         print("\nStep 8: Generating Gemma Response")
         gemma_start = time.time()
-        # Generate a response using Gemma
-        gemma_response = generate_gemma_response(combined_context, query)
+        # Generate a response using Gemini
+        gemma_response = generate_response(combined_context, query)
         gemma_generation_time = time.time() - gemma_start
-        print(f"Gemma response generated in {gemma_generation_time:.2f} seconds")
+        print(f"Gemini response generated in {gemma_generation_time:.2f} seconds")
         
         # Clean up context data
         cleanup_variables(combined_context)
@@ -1134,6 +581,7 @@ def search_endpoint():
         final_results = [{
             'text': gemma_response,
             'source': 'AI Assistant',
+            'full_path': None,
             'score': 1.0
         }] + results  # Add original context chunks after the AI response
         
@@ -1149,6 +597,7 @@ def search_endpoint():
             'results': final_results,
             'processing_time': f"{total_time:.2f}",
             'gemma_generation_time': f"{gemma_generation_time:.2f}",
+            'model_used': 'llama-3.1-8b-instant (Groq)',
             'system_stats': {
                 'ram_usage_percent': final_stats['ram_percent'],
                 'peak_ram_percent': max(search_stats['ram_percent'], final_stats['ram_percent']),

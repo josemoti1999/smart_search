@@ -8,3 +8,4 @@ python-docx
 psutil
 bitsandbytes
 accelerate
+google-generativeai

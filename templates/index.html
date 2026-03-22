@@ -4,370 +4,522 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Search</title>
-    <!-- Using Tailwind CSS for styling for a modern look -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
-        }
-        /* Simple spinner animation */
+        body { font-family: 'Inter', sans-serif; }
         .spinner {
-            border: 4px solid rgba(0, 0, 0, 0.1);
-            width: 24px;
-            height: 24px;
+            border: 3px solid rgba(0,0,0,0.1);
+            width: 18px; height: 18px;
             border-radius: 50%;
-            border-left-color: #09f;
-            animation: spin 1s ease infinite;
+            border-left-color: #3b82f6;
+            animation: spin 0.8s ease infinite;
+            display: inline-block;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        /* Logo animation */
-        .logo {
-            opacity: 0;
-            animation: fadeBrighten 1.5s ease-in forwards;
-        }
+        @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+        .logo { opacity:0; animation: fadeBrighten 1.2s ease-in forwards; }
         @keyframes fadeBrighten {
-            0% {
-                opacity: 0;
-                filter: brightness(0.5);
-            }
-            100% {
-                opacity: 1;
-                filter: brightness(1);
-            }
+            0%  { opacity:0; filter:brightness(0.4); }
+            100%{ opacity:1; filter:brightness(1); }
         }
         .logo-text {
             background: linear-gradient(135deg, #4285f4, #ea4335, #fbbc05, #34a853);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-            font-weight: bold;
+            -webkit-background-clip: text; background-clip: text; color: transparent; font-weight: bold;
         }
+        #sidebar {
+            width: 280px; min-width: 280px;
+            transition: width 0.25s ease, min-width 0.25s ease;
+        }
+        #sidebar.collapsed { width: 0; min-width: 0; }
+        #sidebar-inner { width: 280px; }
+        #show-sidebar-btn {
+            display: none; position: fixed; top: 20px; left: 0;
+            z-index: 50; background: white; border: 1px solid #e5e7eb;
+            border-left: none; border-radius: 0 8px 8px 0;
+            padding: 8px 6px; cursor: pointer; box-shadow: 2px 2px 6px rgba(0,0,0,0.08);
+        }
+        #sidebar.collapsed ~ * #show-sidebar-btn,
+        body.sidebar-hidden #show-sidebar-btn { display: flex; }
+        .doc-item:hover .doc-hover { opacity: 1; }
+        .doc-hover { opacity: 0; transition: opacity 0.15s; }
     </style>
 </head>
-<body class="bg-gray-50 text-gray-800">
-    <div class="container mx-auto min-h-screen flex flex-col items-center">
-        <!-- Header with Logo -->
-        <header class="text-center mt-20">
-            <div class="flex items-center justify-center mb-4">
-                <div class="logo flex items-center space-x-3">
-                    <svg class="w-12 h-12 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                    </svg>
-                    <h1 class="text-4xl md:text-5xl logo-text">Smart Search</h1>
-                </div>
-            </div>
-            
-            <!-- Index Widget -->
-            <div class="relative -left-32 mt-4 mb-8">
-                <button id="index-button" class="group flex items-center space-x-2 bg-gray-100 hover:bg-gray-200 px-4 py-2.5 rounded-lg transition-all duration-200 border border-gray-200 shadow-sm hover:shadow-md">
-                    <div class="flex items-center space-x-2">
-                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                        </svg>
-                        <span class="text-sm font-medium text-gray-700">Index Files</span>
-                        <div id="index-spinner" class="spinner hidden"></div>
-                    </div>
-                    <!-- Tooltip -->
-                    <div class="opacity-0 group-hover:opacity-100 transition-opacity absolute left-0 top-full mt-2 w-48 bg-gray-800 text-white text-xs rounded-md py-1.5 px-2 text-center">
-                        Click here to index files up to date
-                    </div>
-                </button>
-            </div>
-        </header>
+<body class="bg-gray-50 text-gray-800 min-h-screen">
 
-        <!-- Status Message Area -->
-        <div id="status-message" class="w-full max-w-2xl mb-6 p-4 rounded-lg text-center" role="alert" aria-live="assertive"></div>
-        
-        <!-- Main Search Section -->
-        <div class="w-full max-w-2xl px-4">
-            <form id="search-form" class="relative">
-                <div class="relative flex items-center">
-                    <!-- Search Input with Integrated Dropdown -->
-                    <div class="flex-1 relative">
-                        <!-- Three-dot menu button -->
-                        <button type="button" id="file-type-dropdown" class="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 hover:bg-gray-100 rounded-full transition-colors z-10">
-                            <svg class="w-5 h-5 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
-                                <circle cx="12" cy="6" r="2"/>
-                                <circle cx="12" cy="12" r="2"/>
-                                <circle cx="12" cy="18" r="2"/>
+    <!-- Page wrapper: sidebar + main -->
+    <div class="flex min-h-screen">
+
+        <!-- Show sidebar tab (visible only when sidebar is hidden) -->
+        <button id="show-sidebar-btn" onclick="toggleSidebar()" title="Show document list">
+            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+        </button>
+
+        <!-- ===== LEFT SIDEBAR ===== -->
+        <aside id="sidebar" class="bg-white border-r border-gray-200 flex flex-col h-screen sticky top-0 overflow-hidden">
+            <div id="sidebar-inner">
+
+                <!-- Sidebar header -->
+                <div class="px-4 pt-4 pb-3 border-b border-gray-100">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"/>
+                            </svg>
+                            <span class="text-sm font-semibold text-gray-700">Indexed Documents</span>
+                            <span id="sidebar-count" class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-mono">0</span>
+                        </div>
+                        <!-- Collapse button -->
+                        <button onclick="toggleSidebar()" title="Hide sidebar" class="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
                             </svg>
                         </button>
-                        
-                        <input type="text" id="query-input" class="w-full h-12 pl-12 pr-24 text-lg border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm" placeholder="Type your question here...">
-                        
-                        <!-- Selected File Type Indicator -->
-                        <div id="selected-type-indicator" class="hidden absolute left-3 bottom-[-28px] flex items-center space-x-1 text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full">
-                            <span id="selected-type-icon" class="w-3 h-3"></span>
+                    </div>
+                </div>
+
+                <!-- Document list -->
+                <div id="sidebar-docs" class="overflow-y-auto px-2 py-2" style="height: calc(100vh - 110px)">
+                    <!-- Empty state -->
+                    <div id="sidebar-empty" class="flex flex-col items-center justify-center h-40 text-center px-4">
+                        <svg class="w-10 h-10 text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                        <p class="text-xs text-gray-400">No documents indexed yet.<br>Click <strong>Index Files</strong> to start.</p>
+                    </div>
+                </div>
+
+                <!-- Sidebar footer: stats -->
+                <div id="sidebar-footer" class="hidden px-4 py-2.5 border-t border-gray-100 bg-gray-50">
+                    <div class="flex items-center justify-between text-xs text-gray-500">
+                        <span id="footer-docs">0 docs</span>
+                        <span class="text-gray-300">|</span>
+                        <span id="footer-mb">0 MB</span>
+                    </div>
+                </div>
+
+            </div>
+        </aside>
+
+        <!-- ===== MAIN CONTENT ===== -->
+        <div class="flex-1 flex flex-col items-center">
+
+            <!-- Header -->
+            <header class="text-center mt-16 mb-2 w-full px-6">
+                <div class="flex items-center justify-center mb-6">
+                    <div class="logo flex items-center space-x-3">
+                        <svg class="w-10 h-10 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                        <h1 class="text-4xl logo-text">Smart Search</h1>
+                    </div>
+                </div>
+
+                <!-- Index controls row -->
+                <div class="flex items-center justify-center gap-3 mb-3">
+                    <div class="relative">
+                        <button id="index-button" class="group flex items-center gap-2 bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-lg border border-gray-200 shadow-sm transition-all text-sm font-medium text-gray-700">
+                            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                            <span id="index-button-text">Index Files</span>
+                            <div id="index-spinner" class="spinner hidden"></div>
+                            <div class="opacity-0 group-hover:opacity-100 absolute left-0 top-full mt-1.5 w-52 bg-gray-800 text-white text-xs rounded py-1.5 px-2 text-center z-10 transition-opacity">
+                                Scans ~/Documents for PDF &amp; DOCX (max 100)
+                            </div>
+                        </button>
+                    </div>
+
+                    <!-- Stats badge -->
+                    <div id="index-stats" class="hidden flex items-center gap-2 bg-green-50 border border-green-200 text-green-800 text-xs px-3 py-2 rounded-lg">
+                        <svg class="w-3.5 h-3.5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <span id="stats-docs" class="font-semibold">0 docs</span>
+                        <span class="text-green-300">|</span>
+                        <span id="stats-mb" class="font-semibold">0 MB</span>
+                    </div>
+                </div>
+
+                <!-- Progress bar -->
+                <div id="progress-container" class="hidden w-full max-w-md mx-auto mb-3">
+                    <div class="bg-gray-200 rounded-full h-2.5">
+                        <div id="progress-bar" class="bg-blue-500 h-2.5 rounded-full transition-all duration-300" style="width:0%"></div>
+                    </div>
+                    <p id="progress-text" class="text-center text-xs text-gray-500 mt-1.5">Indexing: 0 / 0 files</p>
+                </div>
+            </header>
+
+            <!-- Status message -->
+            <div id="status-message" class="w-full max-w-2xl px-6 mb-4 rounded-lg text-center" role="alert" aria-live="assertive"></div>
+
+            <!-- Search bar -->
+            <div class="w-full max-w-2xl px-6">
+                <form id="search-form">
+                    <div class="relative flex items-center">
+                        <!-- Three-dot dropdown trigger -->
+                        <button type="button" id="file-type-dropdown" class="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 hover:bg-gray-100 rounded-full z-10">
+                            <svg class="w-5 h-5 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
+                                <circle cx="12" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="18" r="2"/>
+                            </svg>
+                        </button>
+
+                        <input type="text" id="query-input"
+                            class="w-full h-12 pl-12 pr-28 text-base border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                            placeholder="Ask a question about your documents...">
+
+                        <!-- Selected filter pill -->
+                        <div id="selected-type-indicator" class="hidden absolute left-3 bottom-[-26px] flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                            <span id="selected-type-icon"></span>
                             <span id="selected-type-text">All Files</span>
-                            <button type="button" id="clear-file-type" class="ml-1 text-gray-400 hover:text-gray-600">
+                            <button type="button" id="clear-file-type" class="ml-0.5 text-gray-400 hover:text-gray-600">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                                 </svg>
                             </button>
                         </div>
-                        
-                        <!-- Dropdown Menu -->
-                        <div id="file-type-menu" class="hidden absolute left-2 top-14 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
+
+                        <!-- Dropdown menu -->
+                        <div id="file-type-menu" class="hidden absolute left-2 top-14 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
                             <div class="py-1">
-                                <button type="button" class="file-type-option w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-100" data-value="all" data-icon="📄" data-color="gray">
-                                    <svg class="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                    </svg>
+                                <button type="button" class="file-type-option w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-50" data-value="all" data-icon="📄">
+                                    <svg class="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                                     All Files
                                 </button>
-                                <button type="button" class="file-type-option w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-100" data-value="documents" data-icon="📝" data-color="blue">
-                                    <svg class="w-4 h-4 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                                    </svg>
-                                    Documents
+                                <button type="button" class="file-type-option w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-50" data-value="documents" data-icon="📝">
+                                    <svg class="w-4 h-4 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+                                    Documents (.docx)
                                 </button>
-                                <button type="button" class="file-type-option w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-100" data-value="spreadsheets" data-icon="📊" data-color="green">
-                                    <svg class="w-4 h-4 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                    </svg>
-                                    Spreadsheets
-                                </button>
-                                <button type="button" class="file-type-option w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-100" data-value="images" data-icon="🖼️" data-color="yellow">
-                                    <svg class="w-4 h-4 mr-2 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                    </svg>
-                                    Images
-                                </button>
-                                <button type="button" class="file-type-option w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-100" data-value="pdfs" data-icon="📑" data-color="red">
-                                    <svg class="w-4 h-4 mr-2 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                                    </svg>
+                                <button type="button" class="file-type-option w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-50" data-value="pdfs" data-icon="📑">
+                                    <svg class="w-4 h-4 mr-2 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
                                     PDFs
                                 </button>
                             </div>
                         </div>
 
-                        <button type="submit" id="search-button" class="absolute right-3 top-1/2 -translate-y-1/2 bg-blue-600 text-white font-medium py-2 px-6 rounded-full hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 flex items-center">
+                        <button type="submit" id="search-button"
+                            class="absolute right-2 top-1/2 -translate-y-1/2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-5 rounded-full flex items-center gap-1.5 transition-colors">
                             <span id="search-button-text">Search</span>
-                            <div id="search-spinner" class="spinner ml-2 hidden"></div>
+                            <div id="search-spinner" class="spinner hidden" style="border-left-color:white;width:14px;height:14px;border-width:2px;"></div>
                         </button>
                     </div>
-                </div>
-            </form>
-        </div>
+                </form>
+            </div>
 
-        <!-- Results Area -->
-        <main id="results-container" class="w-full max-w-4xl mt-8 px-4">
-            <!-- Search results will be dynamically inserted here -->
-        </main>
+            <!-- Results -->
+            <main id="results-container" class="w-full max-w-2xl mt-10 px-6 pb-16"></main>
+        </div>
     </div>
 
     <script>
-        // Get references to all the interactive elements
-        const indexButton = document.getElementById('index-button');
-        const searchButton = document.getElementById('search-button');
-        const queryInput = document.getElementById('query-input');
-        const searchForm = document.getElementById('search-form');
+        const indexButton    = document.getElementById('index-button');
+        const searchButton   = document.getElementById('search-button');
+        const queryInput     = document.getElementById('query-input');
+        const searchForm     = document.getElementById('search-form');
         const resultsContainer = document.getElementById('results-container');
-        const statusMessage = document.getElementById('status-message');
-
-        const indexSpinner = document.getElementById('index-spinner');
-        const searchSpinner = document.getElementById('search-spinner');
+        const statusMessage  = document.getElementById('status-message');
+        const indexSpinner   = document.getElementById('index-spinner');
+        const searchSpinner  = document.getElementById('search-spinner');
         const indexButtonText = document.getElementById('index-button-text');
         const searchButtonText = document.getElementById('search-button-text');
 
-        // Function to display status messages
-        function showStatus(message, type = 'info') {
-            statusMessage.textContent = message;
-            statusMessage.className = 'mb-6 p-4 rounded-lg text-center '; // Reset classes
-            if (type === 'success') {
-                statusMessage.classList.add('bg-green-100', 'text-green-800');
-            } else if (type === 'error') {
-                statusMessage.classList.add('bg-red-100', 'text-red-800');
-            } else if (type === 'warning') {
-                statusMessage.classList.add('bg-yellow-100', 'text-yellow-800');
-            } else { // info
-                statusMessage.classList.add('bg-blue-100', 'text-blue-800');
-            }
+        // ---- Sidebar toggle ----
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const btn = document.getElementById('show-sidebar-btn');
+            const collapsed = sidebar.classList.toggle('collapsed');
+            btn.style.display = collapsed ? 'flex' : 'none';
+            localStorage.setItem('sidebarCollapsed', collapsed);
         }
 
-        // --- Event Listener for Indexing ---
-        indexButton.addEventListener('click', async () => {
-            // Show loading state
-            indexButton.disabled = true;
-            indexSpinner.classList.remove('hidden');
-            indexButtonText.textContent = 'Indexing...';
-            showStatus('Starting the indexing process. This may take a moment...', 'info');
-            resultsContainer.innerHTML = ''; // Clear previous results
+        // Restore sidebar state on load
+        if (localStorage.getItem('sidebarCollapsed') === 'true') {
+            document.getElementById('sidebar').classList.add('collapsed');
+            document.getElementById('show-sidebar-btn').style.display = 'flex';
+        }
 
-            try {
-                const response = await fetch('/index', {
-                    method: 'POST',
-                });
+        // ---- Sidebar helpers ----
+        function renderSidebar(documents) {
+            const list   = document.getElementById('sidebar-docs');
+            const count  = document.getElementById('sidebar-count');
 
-                const data = await response.json();
-
-                if (response.ok) {
-                    showStatus(data.message, data.status);
-                } else {
-                    showStatus(`Error: ${data.message}`, 'error');
-                }
-            } catch (error) {
-                console.error('Indexing fetch error:', error);
-                showStatus('An unexpected error occurred. Check the console.', 'error');
-            } finally {
-                // Restore button state
-                indexButton.disabled = false;
-                indexSpinner.classList.add('hidden');
-                indexButtonText.textContent = 'Index Files';
-            }
-        });
-
-        // --- Event Listener for Searching ---
-        searchForm.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            const query = queryInput.value.trim();
-            if (!query) {
-                showStatus('Please enter a question.', 'warning');
+            if (!documents || documents.length === 0) {
+                list.innerHTML = `
+                    <div id="sidebar-empty" class="flex flex-col items-center justify-center h-40 text-center px-4">
+                        <svg class="w-10 h-10 text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                        <p class="text-xs text-gray-400">No documents indexed yet.<br>Click <strong>Index Files</strong> to start.</p>
+                    </div>`;
+                count.textContent = '0';
                 return;
             }
 
-            // Show loading state
-            searchButton.disabled = true;
-            searchSpinner.classList.remove('hidden');
-            searchButtonText.textContent = 'Searching...';
-            showStatus('Searching for relevant information...', 'info');
+            count.textContent = documents.length;
+
+            // Group by folder
+            const groups = {};
+            documents.forEach(doc => {
+                const folder = doc.folder || '/';
+                if (!groups[folder]) groups[folder] = [];
+                groups[folder].push(doc);
+            });
+
+            let html = '';
+            for (const [folder, docs] of Object.entries(groups)) {
+                const label = folder === '/' ? '~/' : '~/' + folder;
+                html += `
+                    <div class="mb-3">
+                        <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide px-2 mb-1 truncate" title="${folder}">${label}</p>
+                        ${docs.map(doc => {
+                            const isPdf = doc.type === 'pdf';
+                            const iconColor = isPdf ? 'text-red-400' : 'text-blue-400';
+                            const badgeColor = isPdf ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500';
+                            return `
+                            <div class="doc-item flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-gray-50 cursor-default" title="${doc.full_path}">
+                                <svg class="w-4 h-4 flex-shrink-0 ${iconColor}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                                </svg>
+                                <span class="text-xs text-gray-700 truncate flex-1">${doc.filename}</span>
+                                <svg class="w-3.5 h-3.5 flex-shrink-0 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" title="Indexed">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                                </svg>
+                            </div>`;
+                        }).join('')}
+                    </div>
+                `;
+            }
+
+            list.innerHTML = html;
+        }
+
+        async function loadSidebar() {
+            try {
+                const res = await fetch('/documents');
+                const data = await res.json();
+                renderSidebar(data.documents);
+            } catch(e) {}
+        }
+
+        async function loadIndexStats() {
+            try {
+                const res = await fetch('/index-stats');
+                const data = await res.json();
+                if (data.indexed) {
+                    document.getElementById('index-stats').classList.remove('hidden');
+                    document.getElementById('stats-docs').textContent = `${data.doc_count} doc${data.doc_count !== 1 ? 's' : ''}`;
+                    document.getElementById('stats-mb').textContent = `${data.size_mb} MB`;
+                    document.getElementById('sidebar-footer').classList.remove('hidden');
+                    document.getElementById('footer-docs').textContent = `${data.doc_count} docs`;
+                    document.getElementById('footer-mb').textContent = `${data.size_mb} MB`;
+                }
+            } catch(e) {}
+        }
+
+        // Load on page open
+        loadSidebar();
+        loadIndexStats();
+
+        // ---- Status message ----
+        function showStatus(message, type = 'info') {
+            statusMessage.textContent = message;
+            statusMessage.className = 'w-full max-w-2xl px-6 mb-4 p-3 rounded-lg text-center text-sm';
+            const map = { success:'bg-green-100 text-green-800', error:'bg-red-100 text-red-800', warning:'bg-yellow-100 text-yellow-800', info:'bg-blue-100 text-blue-800' };
+            statusMessage.classList.add(...(map[type] || map.info).split(' '));
+        }
+
+        // ---- Index button ----
+        indexButton.addEventListener('click', async () => {
+            indexButton.disabled = true;
+            indexSpinner.classList.remove('hidden');
+            indexButtonText.textContent = 'Indexing...';
+            showStatus('Scanning ~/Documents for PDF & DOCX files (up to 100)...', 'info');
             resultsContainer.innerHTML = '';
 
-            // Get the selected file type from the dropdown
-            const selectedFileType = document.getElementById('selected-type-text').textContent.trim();
+            const progressContainer = document.getElementById('progress-container');
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            progressBar.style.width = '0%';
+            progressText.textContent = 'Indexing: 0 / 0 files';
+            progressContainer.classList.remove('hidden');
+
+            let progressInterval = setInterval(async () => {
+                try {
+                    const r = await fetch('/progress');
+                    const d = await r.json();
+                    if (d.total > 0) {
+                        const pct = Math.round(d.current / d.total * 100);
+                        progressBar.style.width = pct + '%';
+                        if (d.status === 'encoding') {
+                            progressText.textContent = `Encoding chunks… (${d.current} / ${d.total} files read)`;
+                        } else {
+                            progressText.textContent = `Indexing: ${d.current} / ${d.total} files`;
+                        }
+                    }
+                    if (d.status === 'completed' || d.status === 'error') {
+                        clearInterval(progressInterval);
+                        progressBar.style.width = '100%';
+                        progressText.textContent = d.status === 'completed'
+                            ? `Done — ${d.total} / ${d.total} files indexed`
+                            : 'Indexing failed';
+                        setTimeout(() => progressContainer.classList.add('hidden'), 2500);
+                    }
+                } catch(e) {}
+            }, 800);
 
             try {
-                console.log('Sending search request:', {
-                    query: query,
-                    fileType: selectedFileType
-                });
-                
-                const response = await fetch('/search', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: query, fileType: selectedFileType }),
-                });
-                
-                console.log('Search response status:', response.status);
-
+                const response = await fetch('/index', { method: 'POST' });
                 const data = await response.json();
-
                 if (response.ok) {
-                    displayResults(data.results, data.processing_time, data.gemma_generation_time);
+                    showStatus(data.message, data.status);
+                    await Promise.all([loadIndexStats(), loadSidebar()]);
                 } else {
                     showStatus(`Error: ${data.message}`, 'error');
                 }
-
-            } catch (error) {
-                console.error('Search fetch error:', error);
-                showStatus('An unexpected error occurred. Check the console.', 'error');
+            } catch(e) {
+                showStatus('An unexpected error occurred.', 'error');
             } finally {
-                // Restore button state
+                indexButton.disabled = false;
+                indexSpinner.classList.add('hidden');
+                indexButtonText.textContent = 'Index Files';
+                // Don't clear the interval here — let it catch the 'completed' status
+                // and set 100% itself. Clear after a safe delay.
+                setTimeout(() => clearInterval(progressInterval), 4000);
+            }
+        });
+
+        // ---- Search ----
+        searchForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const query = queryInput.value.trim();
+            if (!query) { showStatus('Please enter a question.', 'warning'); return; }
+
+            searchButton.disabled = true;
+            searchSpinner.classList.remove('hidden');
+            searchButtonText.textContent = 'Searching...';
+            showStatus('Searching your documents...', 'info');
+            resultsContainer.innerHTML = '';
+
+            const selectedFileType = document.getElementById('selected-type-text').textContent.trim();
+
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query, fileType: selectedFileType }),
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    displayResults(data.results, data.processing_time, data.gemma_generation_time, data.model_used);
+                } else {
+                    showStatus(data.error || 'Search failed.', 'error');
+                }
+            } catch(e) {
+                showStatus('An unexpected error occurred.', 'error');
+            } finally {
                 searchButton.disabled = false;
                 searchSpinner.classList.add('hidden');
                 searchButtonText.textContent = 'Search';
             }
         });
 
-        // Function to render the search results on the page
-        function displayResults(results, totalTime, gemmaTime) {
+        // ---- Display results ----
+        function displayResults(results, totalTime, gemmaTime, modelUsed) {
             if (!results || results.length === 0) {
                 showStatus('No relevant information found in your documents.', 'info');
                 return;
             }
+            statusMessage.innerHTML = '';
 
-            statusMessage.innerHTML = ''; // Clear status message area
+            const aiResult    = results.find(r => r.source === 'AI Assistant');
+            const chunkResults = results.filter(r => r.source !== 'AI Assistant');
 
-            const resultsHtml = `
-                <div class="mb-6">
-                    <h2 class="text-2xl font-semibold mb-4">Search Results</h2>
-                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                        <div class="flex flex-wrap gap-4 text-sm text-blue-800">
-                            <div class="flex items-center">
-                                <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path>
-                                </svg>
-                                <span><strong>Total Search Time:</strong> ${totalTime}s</span>
-                            </div>
-                            <div class="flex items-center">
-                                <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                </svg>
-                                <span><strong>AI Response Generation:</strong> ${gemmaTime}s</span>
-                            </div>
-                            <div class="flex items-center">
-                                <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"></path>
-                                </svg>
-                                <span><strong>Results Found:</strong> ${results.length}</span>
-                            </div>
+            const aiHtml = aiResult ? `
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-5">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.3 3.3 0 01-4.646 0l-.347-.347z"/>
+                            </svg>
+                            <span class="font-semibold text-blue-800 text-sm">AI Summary</span>
                         </div>
+                        <span class="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-mono">${modelUsed || 'llama-3.1-8b-instant (Groq)'}</span>
                     </div>
-                </div>
-                <div class="space-y-4">
-                    ${results.map(result => `
-                        <div class="bg-white p-5 rounded-lg shadow">
-                            <p class="text-gray-700">${result.text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
-                            <div class="mt-3 text-sm text-gray-500 flex justify-between items-center">
-                                <span>Source: <strong>${result.source}</strong></span>
-                                <span class="font-mono text-xs bg-gray-100 text-gray-700 py-1 px-2 rounded">
-                                    Score: ${result.score.toFixed(4)}
-                                </span>
+                    <p class="text-gray-800 text-sm whitespace-pre-wrap leading-relaxed">${aiResult.text.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p>
+                </div>` : '';
+
+            const statsBar = `
+                <div class="flex flex-wrap gap-3 text-xs text-gray-500 bg-gray-100 rounded-lg px-3 py-2 mb-4">
+                    <span><strong>Time:</strong> ${totalTime}s</span>
+                    <span>·</span>
+                    <span><strong>Chunks:</strong> ${chunkResults.length}</span>
+                    ${gemmaTime ? `<span>·</span><span><strong>AI:</strong> ${gemmaTime}s</span>` : ''}
+                </div>`;
+
+            const chunksHtml = chunkResults.map(result => {
+                const filename = result.source.split('/').pop();
+                const fullPath = result.full_path || ('~/Documents/' + result.source);
+                const isPdf = result.source.toLowerCase().endsWith('.pdf');
+                const iconColor = isPdf ? 'text-red-400' : 'text-blue-400';
+                return `
+                <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+                    <div class="flex items-start justify-between gap-2 mb-2">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <svg class="w-4 h-4 flex-shrink-0 ${iconColor}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                            </svg>
+                            <div class="min-w-0">
+                                <p class="font-semibold text-gray-800 text-sm truncate">${filename}</p>
+                                <p class="text-xs text-gray-400 font-mono truncate" title="${fullPath}">${fullPath}</p>
                             </div>
                         </div>
-                    `).join('')}
-                </div>
+                        <span class="flex-shrink-0 text-xs font-mono bg-gray-100 text-gray-500 px-2 py-0.5 rounded">
+                            ${(result.score * 100).toFixed(1)}%
+                        </span>
+                    </div>
+                    <p class="text-gray-700 text-sm leading-relaxed border-t border-gray-100 pt-2 mt-1">${result.text.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p>
+                </div>`;
+            }).join('');
+
+            resultsContainer.innerHTML = `
+                <h2 class="text-base font-semibold text-gray-700 mb-3">Results</h2>
+                ${statsBar}
+                ${aiHtml}
+                ${chunkResults.length > 0 ? `
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Matching chunks</p>
+                    <div class="space-y-3">${chunksHtml}</div>` : ''}
             `;
-            resultsContainer.innerHTML = resultsHtml;
         }
-    </script>
-    <script>
-        // Update the dropdown functionality
-        document.addEventListener('DOMContentLoaded', function() {
+
+        // ---- File type dropdown ----
+        document.addEventListener('DOMContentLoaded', () => {
             const dropdownButton = document.getElementById('file-type-dropdown');
-            const dropdownMenu = document.getElementById('file-type-menu');
-            const selectedTypeIndicator = document.getElementById('selected-type-indicator');
-            const selectedTypeIcon = document.getElementById('selected-type-icon');
-            const selectedTypeText = document.getElementById('selected-type-text');
-            const clearFileType = document.getElementById('clear-file-type');
-            const fileTypeOptions = document.querySelectorAll('.file-type-option');
-            let selectedType = 'all';
+            const dropdownMenu   = document.getElementById('file-type-menu');
+            const indicator      = document.getElementById('selected-type-indicator');
+            const typeIcon       = document.getElementById('selected-type-icon');
+            const typeText       = document.getElementById('selected-type-text');
+            const clearBtn       = document.getElementById('clear-file-type');
 
-            // Toggle dropdown
-            dropdownButton.addEventListener('click', () => {
-                dropdownMenu.classList.toggle('hidden');
-            });
-
-            // Close dropdown when clicking outside
-            document.addEventListener('click', (e) => {
-                if (!dropdownButton.contains(e.target) && !dropdownMenu.contains(e.target)) {
+            dropdownButton.addEventListener('click', () => dropdownMenu.classList.toggle('hidden'));
+            document.addEventListener('click', e => {
+                if (!dropdownButton.contains(e.target) && !dropdownMenu.contains(e.target))
                     dropdownMenu.classList.add('hidden');
-                }
             });
-
-            // Handle option selection
-            fileTypeOptions.forEach(option => {
-                option.addEventListener('click', () => {
-                    selectedType = option.dataset.value;
-                    selectedTypeIcon.textContent = option.dataset.icon;
-                    selectedTypeText.textContent = option.textContent.trim();
-                    selectedTypeIndicator.classList.remove('hidden');
+            document.querySelectorAll('.file-type-option').forEach(opt => {
+                opt.addEventListener('click', () => {
+                    typeIcon.textContent = opt.dataset.icon;
+                    typeText.textContent = opt.textContent.trim();
+                    indicator.classList.remove('hidden');
                     dropdownMenu.classList.add('hidden');
                 });
             });
-
-            // Clear selected file type
-            clearFileType.addEventListener('click', (e) => {
+            clearBtn.addEventListener('click', e => {
                 e.stopPropagation();
-                selectedType = 'all';
-                selectedTypeIndicator.classList.add('hidden');
+                typeText.textContent = 'All Files';
+                indicator.classList.add('hidden');
             });
         });
     </script>
