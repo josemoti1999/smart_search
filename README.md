@@ -1,13 +1,17 @@
-# Smart Search
+<div align="center">
+  <img src="electron/assets/icon-512.png" width="96" alt="Smart Search logo"/>
 
-> A local RAG (Retrieval-Augmented Generation) desktop app that semantically searches your PDF and DOCX files and generates AI-powered answers — packaged as a native macOS app with no cloud dependencies except the Groq API.
+  # Smart Search
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
-![Electron](https://img.shields.io/badge/Electron-33-47848F)
-![Flask](https://img.shields.io/badge/Flask-backend-lightgrey)
-![FAISS](https://img.shields.io/badge/FAISS-vector_search-orange)
-![Groq](https://img.shields.io/badge/LLM-Groq%20%7C%20llama--3.1--8b-green)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+  > A local RAG (Retrieval-Augmented Generation) desktop app that semantically searches your PDF and DOCX files and generates AI-powered answers — packaged as a native macOS app with no cloud dependencies except the Groq API.
+
+  ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
+  ![Electron](https://img.shields.io/badge/Electron-33-47848F)
+  ![Flask](https://img.shields.io/badge/Flask-backend-lightgrey)
+  ![FAISS](https://img.shields.io/badge/FAISS-vector_search-orange)
+  ![Groq](https://img.shields.io/badge/LLM-Groq%20%7C%20llama--3.1--8b-green)
+  ![License](https://img.shields.io/badge/License-MIT-yellow)
+</div>
 
 ---
 
